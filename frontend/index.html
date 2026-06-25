@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TenderLead Intelligence Portal | KBP Civil Engineering Services</title>
+    <meta name="description"
+        content="A premium internal dashboard for KBP Civil Engineering Services to track tender intake, keyword filters, and AI-powered evaluation alignment scoring.">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Dashboard Header -->
+        <header>
+            <div class="brand-section">
+                <h1>TenderLead Intelligence Portal</h1>
+                <p>Tracking opportunities from Stage 1 Intake to Stage 2 AI Scoring alignment</p>
+            </div>
+            <div class="header-actions">
+                <button id="renderemail" class="btn-refresh btn-scrape">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                    </svg>
+                    <span>Render &amp; Scrape</span>
+                </button>
+                <button id="refresh-btn" class="btn-refresh">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                    </svg>
+                    Refresh Dashboard
+                </button>
+            </div>
+        </header>
+
+        <section class="stats-grid" aria-label="Key Performance Indicators">
+            <!-- Total Intake -->
+            <div class="stat-card intake">
+                <div class="stat-label">Total Intake Feed</div>
+                <div id="stat-total" class="stat-value">0</div>
+                <div class="stat-subtext">Total alerts parsed from all sources</div>
+            </div>
+            <!-- Stage 1 Passed -->
+
+
+            <!-- Stage 2 Promoted Leads -->
+            <div class="stat-card s2-leads">
+                <div class="stat-label">Promoted Leads (&ge; 70)</div>
+                <div id="stat-s2-leads" class="stat-value">0</div>
+                <div class="stat-subtext">Primary Screening Passed</div>
+            </div>
+
+        </section>
+
+        <!-- Workspace Split Layout -->
+        <main class="workspace-grid">
+            <!-- Sidebar: Active Rules & Criteria -->
+            <section class="settings-sidebar" aria-labelledby="settings-sidebar-title">
+                <div id="settings-sidebar-title" class="settings-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                    KBP Settings Criteria
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Target Range</div>
+                    <div id="rule-range" class="rule-value">Loading...</div>
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Required Threshold</div>
+                    <div id="rule-threshold" class="rule-value">Loading...</div>
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Include Keywords</div>
+                    <div id="rule-include-keywords" class="rule-value" style="max-height: 180px;">Loading...</div>
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Exclude Keywords</div>
+                    <div id="rule-exclude-keywords" class="rule-value" style="max-height: 180px;">Loading...</div>
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Scope of Work</div>
+                    <div id="rule-scope" class="rule-value" style="max-height: 120px;">Loading...</div>
+                </div>
+
+                <div class="rule-group">
+                    <div class="rule-label">Disqualifiers</div>
+                    <div id="rule-disqualifiers" class="rule-value" style="max-height: 120px;">Loading...</div>
+                </div>
+            </section>
+
+            <!-- Table & Filtering Column -->
+            <section class="main-content" aria-label="Tenders Data Table and Controls">
+                <!-- Search & Filters Card -->
+                <div class="controls-card">
+                    <div class="filter-row">
+                        <div class="search-wrapper">
+                            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8" />
+                                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            </svg>
+                            <input type="text" id="search-input" class="search-input"
+                                placeholder="Search by Tender ID, Title, Authority or Location...">
+                        </div>
+                        <div class="filter-selects">
+                            <select id="filter-date" class="select-input" aria-label="Filter by Date">
+                                <option value="all" selected>All Dates</option>
+                                <option value="today">Today</option>
+                                <option value="yesterday">Yesterday</option>
+                                <option value="last-7">Last 7 Days</option>
+                                <option value="custom">Custom Date</option>
+                            </select>
+                            <input type="date" id="filter-date-custom" class="select-input" style="display: none;"
+                                aria-label="Custom date selector">
+                            <select id="filter-source" class="select-input" aria-label="Filter by Source">
+                                <option value="all">All Sources</option>
+                                <option value="Tender247">Tender247</option>
+                                <option value="TenderDetail">TenderDetail</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Tabs -->
+                <div class="tabs-container">
+                    <button id="tab-all" class="tab-btn active" data-filter="all">All Intake Feed</button>
+                    <button id="tab-promoted" class="tab-btn" data-filter="lead_created">Promoted Leads</button>
+                    <button id="tab-s1passed" class="tab-btn" data-filter="rules_passed">Stage 1 Passed</button>
+                    <button id="tab-s2failed" class="tab-btn" data-filter="rejected_ai">Stage 2 Misfits</button>
+                    <button id="tab-s1failed" class="tab-btn" data-filter="rules_rejected">Stage 1 Filtered</button>
+                </div>
+
+                <!-- Live Console Log Terminal (Visible during syncing) -->
+                <div id="console-card" class="table-card" style="display: none; margin-bottom: 20px;">
+                    <div class="drawer-header"
+                        style="background: #0f1626; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+                        <div class="drawer-title-group" style="display: flex; align-items: center; gap: 8px;">
+                            <span class="spinner"
+                                style="width: 14px; height: 14px; border-width: 2px; margin-bottom: 0; margin-right: 4px;"></span>
+                            <h3 id="console-title"
+                                style="font-size: 0.95rem; color: #fff; font-weight: 600; margin: 0;">Live Scraper
+                                Terminal Output</h3>
+                        </div>
+                        <button id="console-close" class="btn-close"
+                            style="font-size: 1.2rem; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;"
+                            aria-label="Close terminal">&times;</button>
+                    </div>
+                    <div id="console-log-body"
+                        style="background: #020617; color: #10B981; font-family: 'Courier New', Courier, monospace; font-size: 0.85rem; padding: 16px; height: 300px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; border-top: 1px solid var(--border-color);">
+                        Initializing scraper...
+                    </div>
+                </div>
+
+                <!-- Data Table -->
+                <div class="table-card">
+                    <div class="table-wrapper">
+                        <table id="tenders-table">
+                            <thead>
+                                <tr>
+                                    <th id="th-id" style="width: 110px;">Tender ID</th>
+                                    <th id="th-source" style="width: 120px;">Source</th>
+                                    <th id="th-title">Title</th>
+                                    <th id="th-details">Authority / Location</th>
+                                    <th id="th-value" style="width: 120px;">Value</th>
+                                    <th id="th-arrival" style="width: 105px;">Arrival</th>
+                                    <th id="th-duedate" style="width: 105px;">Due Date</th>
+                                    <th id="th-status" style="width: 120px;">Status</th>
+                                    <th id="th-score" style="width: 100px; text-align: center;">AI Score</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tenders-table-body">
+                                <!-- Dynamic content loaded via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Empty State and Loading Spinners -->
+                    <div id="table-loading" class="spinner-container">
+                        <div class="spinner"></div>
+                        <p>Loading database records...</p>
+                    </div>
+                    <div id="table-empty" class="empty-state" style="display: none;">
+                        <div class="empty-state-icon">📂</div>
+                        <p>No tenders found matching your selection.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Right-hand slide-out drawer backdrop -->
+    <div id="drawer-backdrop" class="drawer-backdrop" aria-hidden="true"></div>
+
+    <!-- Right-hand slide-out drawer -->
+    <div id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-tender-id">
+        <div class="drawer-header">
+            <div class="drawer-title-group">
+                <h2 id="drawer-tender-id">Tender #1029193</h2>
+                <p id="drawer-source-subtitle">Source: Tender247</p>
+            </div>
+            <button id="drawer-close" class="btn-close" aria-label="Close details">&times;</button>
+        </div>
+
+        <div class="drawer-body">
+            <!-- Score Hero Section (If stage 2 completed) -->
+            <div id="drawer-score-section" class="drawer-score-hero">
+                <div id="drawer-score-circle" class="score-circle">N/A</div>
+                <div>
+                    <h3 style="font-size: 1rem; font-weight: 600; color: white;">AI Alignment Score</h3>
+                    <p id="drawer-action-text"
+                        style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 2px;">Decision: Pending
+                        Evaluation</p>
+                </div>
+            </div>
+
+            <!-- Basic Details -->
+            <div class="detail-section">
+                <h3 class="detail-section-title">General Information</h3>
+                <div style="font-size: 0.9rem; font-weight: 600; color: white; margin-bottom: 12px;" id="drawer-title">
+                    Tender Title Details</div>
+                <div class="meta-grid">
+                    <div>
+                        <div class="meta-item-label">Authority</div>
+                        <div class="meta-item-value" id="drawer-authority">-</div>
+                    </div>
+                    <div>
+                        <div class="meta-item-label">Location</div>
+                        <div class="meta-item-value" id="drawer-location">-</div>
+                    </div>
+                    <div>
+                        <div class="meta-item-label">Estimated Value</div>
+                        <div class="meta-item-value" id="drawer-value">-</div>
+                    </div>
+                    <div>
+                        <div class="meta-item-label">EMD</div>
+                        <div class="meta-item-value" id="drawer-emd">-</div>
+                    </div>
+                    <div>
+                        <div class="meta-item-label">Due Date</div>
+                        <div class="meta-item-value" id="drawer-due-date">-</div>
+                    </div>
+                    <div>
+                        <div class="meta-item-label">Arrival Date</div>
+                        <div class="meta-item-value" id="drawer-processed-date">-</div>
+                    </div>
+                </div>
+                <div style="margin-top: 14px;">
+                    <div class="meta-item-label">Source URL Link</div>
+                    <div class="meta-item-value">
+                        <a id="drawer-link" href="#" target="_blank">
+                            Open Original Listing
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stage 1 Verdict -->
+            <div class="detail-section">
+                <h3 class="detail-section-title">Stage 1 Keyword Filter</h3>
+                <div id="drawer-s1-verdict" class="meta-item-value">Status: Loading...</div>
+                <div id="drawer-s1-rationale"
+                    style="margin-top: 8px; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.4;">No logs
+                    available.</div>
+            </div>
+
+            <!-- Stage 2 AI Dimension Scoring (If leads/evaluated) -->
+            <div id="drawer-dimension-section" class="detail-section" style="display: none;">
+                <h3 class="detail-section-title">Stage 2 AI Dimensions (0-10)</h3>
+
+                <!-- Scope Match -->
+                <div class="dimension-bar-item">
+                    <div class="dimension-info">
+                        <span class="dimension-label">Scope Alignment (30%)</span>
+                        <span id="score-val-scope" class="dimension-score">0/10</span>
+                    </div>
+                    <div class="dimension-bar-track">
+                        <div id="bar-scope" class="dimension-bar-fill dim-scope"></div>
+                    </div>
+                </div>
+
+                <!-- Location Eligibility -->
+                <div class="dimension-bar-item">
+                    <div class="dimension-info">
+                        <span class="dimension-label">Location Suitability (25%)</span>
+                        <span id="score-val-location" class="dimension-score">0/10</span>
+                    </div>
+                    <div class="dimension-bar-track">
+                        <div id="bar-location" class="dimension-bar-fill dim-location"></div>
+                    </div>
+                </div>
+
+                <!-- Eligibility Clearance -->
+                <div class="dimension-bar-item">
+                    <div class="dimension-info">
+                        <span class="dimension-label">Eligibility Credentials (20%)</span>
+                        <span id="score-val-eligibility" class="dimension-score">0/10</span>
+                    </div>
+                    <div class="dimension-bar-track">
+                        <div id="bar-eligibility" class="dimension-bar-fill dim-eligibility"></div>
+                    </div>
+                </div>
+
+                <!-- Value Fit -->
+                <div class="dimension-bar-item">
+                    <div class="dimension-info">
+                        <span class="dimension-label">Budget Fit (15%)</span>
+                        <span id="score-val-value" class="dimension-score">0/10</span>
+                    </div>
+                    <div class="dimension-bar-track">
+                        <div id="bar-value" class="dimension-bar-fill dim-value"></div>
+                    </div>
+                </div>
+
+                <!-- Disqualifier Check -->
+                <div class="dimension-bar-item">
+                    <div class="dimension-info">
+                        <span class="dimension-label">No Disqualifiers Matched (10%)</span>
+                        <span id="score-val-disq" class="dimension-score">0/10</span>
+                    </div>
+                    <div class="dimension-bar-track">
+                        <div id="bar-disq" class="dimension-bar-fill dim-disq"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stage 2 AI Analysis Rationale -->
+            <div id="drawer-rationale-section" class="detail-section" style="display: none;">
+                <h3 class="detail-section-title">Stage 2 AI Rationale Summary</h3>
+                <div id="drawer-rationale-body" class="rationale-text">No detailed rationale available.</div>
+            </div>
+
+            <!-- Extracted Scope of Work -->
+            <div id="drawer-extracted-scope-section" class="detail-section" style="display: none;">
+                <h3 class="detail-section-title">Extracted Details (Scope &amp; Eligibility)</h3>
+                <div class="meta-item-label" style="font-weight:600; margin-bottom: 4px;">Scope of Work / BOQ
+                    Highlights:</div>
+                <div id="drawer-extracted-scope" class="rule-value" style="margin-bottom: 12px; max-height: 150px;">-
+                </div>
+                <div class="meta-item-label" style="font-weight:600; margin-bottom: 4px;">Eligibility &amp; Credentials:
+                </div>
+                <div id="drawer-extracted-eligibility" class="rule-value" style="max-height: 150px;">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Import -->
+    <script src="app.js"></script>
+</body>
+
+</html>

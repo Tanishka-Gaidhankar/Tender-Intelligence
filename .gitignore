@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.env
+
+# Database
+*.db
+tender_intelligence.db
+frontend/tender_intelligence.db
+
+# Sessions & credentials
+*_session.json
+tender247_session.json
+tenderdetail_session.json
+frontend/tender247_session.json
+frontend/tenderdetail_session.json
+
+# Logs
+*.log
+frontend/scrape.log
+
+# Temp/HTML dumps
+tender247_dashboard_dump.html
+
+# IDEs
+.idea/
+.vscode/

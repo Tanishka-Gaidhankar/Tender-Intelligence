@@ -1,0 +1,37 @@
+{
+  "company_profile": "KBP Civil Engineering Services is a highly experienced civil engineering and contracting firm specializing in infrastructure development, structural auditing, civil consultancy, and heavy civil construction projects.",
+  "scope_of_work": "structural audit,safety audit,stablility testing,structural assessment,structural health inspection,bridge audit,asset survey,technical audit,evaluation,life cycle assessment,building saftey,structural fitness, Non destructive testing, NDT testing, rebound hammer test, structural NDT testing, structural design consultancy, structural drawing,Third Party inspection,quality inspection, structural inspection, Geotechnical investigations",
+  "eligible_states": [],
+  "min_tender_value": "2.0 Lakhs",
+  "max_tender_value": "2.0 Crores",
+  "disqualifiers": "Residential building construction, apartment housing construction, commercial building building-only works, housekeeping, catering, security services, IT software, hardware supply, solar plant, furniture supply, vehicle leasing, supply-only contracts without installation or service.",
+  "ai_score_threshold": 70,
+  "stage1_include_keywords": [
+    "structural audit",
+    "safety audit",
+    "Technical audit",
+    "geotechnical investigations",
+    "Non-destructive testing",
+    "structural design service",
+    "certification services",
+    "Third party inspection"
+  ],
+  "stage1_exclude_keywords": [
+    "housekeeping",
+    "catering",
+    "software",
+    "hardware",
+    "furniture",
+    "vehicle",
+    "security services",
+    "building construction only",
+    "residential quarters",
+    "staff quarters"
+  ],
+  "llm": {
+    "provider": "cohere",
+    "api_key": "bpnXmrsGhVwkNoKbejAlrbi2Uu1nCDm4DnTWmzbL",
+    "model": "command-r-plus-08-2024",
+    "temperature": 0.0
+  }
+}

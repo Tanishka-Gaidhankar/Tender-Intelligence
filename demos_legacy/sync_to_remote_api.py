@@ -92,12 +92,12 @@ def main():
     
     # Mapping for status values
     status_map = {
-        "new": "New",
-        "lead_created": "Lead Created",
-        "rules_passed": "Rules Passed",
-        "rules_rejected": "Rules Rejected",
-        "rejected_ai": "Rejected AI",
-        "ai_processing": "AI Processing"
+        "new": "",
+        "lead_created": "Good Match",
+        "rules_passed": "May be",
+        "rules_rejected": "No Match",
+        "rejected_ai": "No Match",
+        "ai_processing": "May be"
     }
     
     headers = {

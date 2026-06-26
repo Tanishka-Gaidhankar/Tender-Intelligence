@@ -20,9 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "beautifulsoup4>=4.15.0",
-    "playwright>=1.60.0",
-    "requests>=2.34.0",
+    "beautifulsoup4",
+    "playwright>=1.30.0",
+    "requests",
 ]
 
 [project.optional-dependencies]

@@ -21,8 +21,7 @@ setup(
 	zip_safe=False,
 	include_package_data=True,
 	install_requires=[
-		"beautifulsoup4>=4.15.0",
-		"playwright>=1.60.0",
-		"requests>=2.34.0"
-	]
-)
+		"beautifulsoup4",
+		"playwright>=1.30.0",
+		"requests"
+	])

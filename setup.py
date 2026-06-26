@@ -1,7 +1,15 @@
 from setuptools import setup, find_packages
+import os
 
-# get version from __version__ variable in tenderlead/__init__.py
-from tenderlead import __version__ as version
+# read version from tenderlead/__init__.py without importing it
+version = "0.1.0"
+init_path = os.path.join(os.path.dirname(__file__), "tenderlead", "__init__.py")
+if os.path.exists(init_path):
+    with open(init_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("__version__"):
+                version = line.split("=")[1].strip().strip('"').strip("'")
+                break
 
 setup(
 	name="tenderlead",

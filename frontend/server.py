@@ -87,7 +87,7 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
             print(f"Error clearing log: {e}")
 
         try:
-            pipeline_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "pipeline.py"))
+            pipeline_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tenderlead", "pipeline.py"))
             python_bin = self.get_python_binary()
             project_dir = os.path.dirname(pipeline_path)
 

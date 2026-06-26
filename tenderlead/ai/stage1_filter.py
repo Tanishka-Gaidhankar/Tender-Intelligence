@@ -9,8 +9,8 @@ Implements Stage 1 Cheap Filtering logic:
 import json
 import os
 import re
-from llm_client import call_llm
-from tenderdetail_detail_scraper import fetch_tenderdetail_detail
+from .llm_client import call_llm
+from tenderlead.scrapers.tenderdetail_detail_scraper import fetch_tenderdetail_detail
 
 CONFIG_FILE = "tender_rules_settings.json"
 

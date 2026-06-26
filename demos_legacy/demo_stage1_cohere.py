@@ -9,15 +9,15 @@ import json
 import os
 import sys
 
-from stage1_filter import evaluate_keywords, load_filter_rules, ai_fit_guess
-from pipeline import load_settings
+from tenderlead.ai.stage1_filter import evaluate_keywords, load_filter_rules, ai_fit_guess
+from tenderlead.pipeline import load_settings
 
 def run_demo():
     print("==========================================================")
     print("      STAGE A FILTER DEMO — COHERE API INTEGRATION        ")
     print("==========================================================\n")
 
-    from llm_client import load_llm_config
+    from tenderlead.ai.llm_client import load_llm_config
     settings = load_settings()
     llm_config = load_llm_config()
     

@@ -19,8 +19,8 @@ same folder as this script.
 
 import sys
 from playwright.sync_api import sync_playwright
-from tender247_login import login_to_tender247
-from tender247_scraper import parse_tender247_dashboard
+# from tender247_login import login_to_tender247
+from tenderlead.scrapers.tender247_scraper import parse_tender247_dashboard
 
 
 def run(entry_url: str, headless: bool = True):
@@ -49,8 +49,9 @@ def run(entry_url: str, headless: bool = True):
 
             print(f"   Landed on: {page.url}")
 
-            from tender247_login import _confirm_dashboard_loaded
-            success = _confirm_dashboard_loaded(page)
+            # from tender247_login import _confirm_dashboard_loaded
+            # success = _confirm_dashboard_loaded(page)
+            success = False
             print(f"   Dashboard loaded via direct URL? {success}\n")
 
             if not success:

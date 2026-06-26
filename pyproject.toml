@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tenderlead"
+version = "0.1.0"
+description = "Tender Intelligence System: Automated intake, filtering, AI scoring, and ERPNext integration for tenders"
+readme = "tender_intelligence_project_context.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "KBP Civil Engineering Services" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "playwright>=1.60.0",
+    "requests>=2.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=23.0",
+    "isort>=5.12",
+    "pytest>=7.0",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.setuptools.packages.find]
+include = ["tenderlead", "tenderlead.*"]

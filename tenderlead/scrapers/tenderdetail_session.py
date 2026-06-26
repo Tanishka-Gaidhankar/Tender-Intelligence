@@ -230,7 +230,7 @@ def scrape_all_query_tenders(page: Page, max_pages_per_query: int = 10) -> list[
 
     Returns a flat list of all parsed tender dicts (deduplicated by tender_id).
     """
-    from tenderdetail_scraper import parse_tenderdetail_listings, parse_pagination_info
+    from .tenderdetail_scraper import parse_tenderdetail_listings, parse_pagination_info
 
     print("Navigating to TenderDetail dashboard...")
     try:

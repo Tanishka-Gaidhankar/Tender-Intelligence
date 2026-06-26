@@ -14,15 +14,15 @@ from datetime import datetime
 
 import requests
 
-import email_reader
-from stage1_filter import evaluate_tender247, evaluate_tenderdetail
-from stage2_scorer import score_tender
-from tender247_detail_scraper import fetch_tender247_detail_summary
-from tender247_scraper import parse_tender247_dashboard
-from tender247_session import get_authenticated_page
-from tenderdetail_session import get_authenticated_page as get_tenderdetail_page, scrape_all_query_tenders, _is_dashboard
-from tenderdetail_detail_scraper import fetch_tenderdetail_detail
-from tenderdetail_scraper import parse_tenderdetail_listings
+from . import email_reader
+from .ai.stage1_filter import evaluate_tender247, evaluate_tenderdetail
+from .ai.stage2_scorer import score_tender
+from .scrapers.tender247_detail_scraper import fetch_tender247_detail_summary
+from .scrapers.tender247_scraper import parse_tender247_dashboard
+from .scrapers.tender247_session import get_authenticated_page
+from .scrapers.tenderdetail_session import get_authenticated_page as get_tenderdetail_page, scrape_all_query_tenders, _is_dashboard
+from .scrapers.tenderdetail_detail_scraper import fetch_tenderdetail_detail
+from .scrapers.tenderdetail_scraper import parse_tenderdetail_listings
 
 DB_FILE = "tender_intelligence.db"
 SETTINGS_FILE = "tender_rules_settings.json"

@@ -10,7 +10,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -93,7 +93,7 @@ def load_settings() -> dict:
     return {}
 
 
-def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None, ai_rationale: str = None):
+def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None, ai_rationale: str = None, created_at: str = None):
     """Inserts or updates a record in raw_tender_feed."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -131,7 +131,7 @@ def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None
         ai_score,
         ai_rationale,
         link,
-        datetime.now().isoformat()
+        created_at or datetime.now().isoformat()
     ))
     conn.commit()
     conn.close()
@@ -223,6 +223,33 @@ def intake_tenderdetail_batch(batch: dict) -> list[dict]:
     return listings
 
 
+def intake_tenderdetail_batch(batch: dict) -> list[dict]:
+    """Downloads listings from TenderDetail email view_all URL, parses, and saves to DB as 'new'."""
+    print(f"\n--- Intake: Processing TenderDetail Batch received at {batch['received_at']} ---")
+    url = email_reader.extract_tenderdetail_view_all_url(batch["html"])
+    if not url:
+        print("ERROR: Could not find 'View All' URL in TenderDetail email.")
+        return []
+
+    print(f"Fetching listings page: {url}")
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."}
+    res = requests.get(url, headers=headers, timeout=30)
+    if res.status_code != 200:
+        print(f"Failed to fetch listings page. HTTP {res.status_code}")
+        return []
+
+    listings = parse_tenderdetail_listings(res.text)
+    print(f"Parsed {len(listings)} listings from TenderDetail.")
+
+    for idx, tender in enumerate(listings):
+        arrival_date = batch["received_at"].strftime("%Y-%m-%d") if "received_at" in batch else "N/A"
+        print(f"  [{idx+1}/{len(listings)}] Source: TenderDetail | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['view_tender_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Value: {tender.get('tender_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
+        created_at_val = batch["received_at"].isoformat() if "received_at" in batch else None
+        save_raw_feed(tender, "TenderDetail", "new", created_at=created_at_val)
+    
+    return listings
+
+
 def intake_tender247_batch(batch: dict) -> list[dict]:
     """Loads Tender247 Today Tenders dashboard using the email's link directly, parses listings, and saves to DB as 'new'."""
     print(f"\n--- Intake: Processing Tender247 Batch received at {batch['received_at']} ---")
@@ -266,7 +293,8 @@ def intake_tender247_batch(batch: dict) -> list[dict]:
         for idx, tender in enumerate(listings):
             arrival_date = batch["received_at"].strftime("%Y-%m-%d") if "received_at" in batch else "N/A"
             print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
-            save_raw_feed(tender, "Tender247", "new")
+            created_at_val = batch["received_at"].isoformat() if "received_at" in batch else None
+            save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
             
     finally:
         browser.close()
@@ -317,7 +345,50 @@ def intake_tenderdetail_direct() -> list[dict]:
 
 
 
-def intake_tender247_direct() -> list[dict]:
+def intake_tenderdetail_direct(target_date=None) -> list[dict]:
+    """
+    Logs into TenderDetail via saved session, scrapes all fresh tenders from
+    all saved query categories (with pagination), and saves them to the DB.
+    """
+    print(f"\n--- Intake: Fetching TenderDetail directly from website ---")
+    page, browser, playwright_ctx = get_tenderdetail_page(headless=True)
+
+    listings = []
+    try:
+        # Verify authentication
+        if not _is_dashboard(page):
+            print("ERROR: TenderDetail session expired or invalid.")
+            print("  ACTION: Run   python tenderdetail_session.py --setup   to refresh session.")
+            return []
+
+        # Scrape all queries and their paginated tender listings
+        listings = scrape_all_query_tenders(page)
+
+        if not listings:
+            print("No TenderDetail tenders found (all query categories may have 0 fresh tenders).")
+            return []
+
+        arrival_date = target_date.strftime("%Y-%m-%d") if target_date else datetime.now().strftime("%Y-%m-%d")
+        created_at_val = (datetime.combine(target_date, datetime.min.time()) + timedelta(hours=12)).isoformat() if target_date else datetime.now().isoformat()
+        
+        for idx, tender in enumerate(listings):
+            print(
+                f"  [{idx+1}/{len(listings)}] Source: TenderDetail | ID: {tender['tender_id']} | "
+                f"Title: {tender['title'][:60]}... | Link: {tender['view_tender_url']} | "
+                f"Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | "
+                f"Value: {tender.get('tender_value') or 'N/A'} | "
+                f"Org: {tender.get('authority')} | State: {tender.get('location')}"
+            )
+            save_raw_feed(tender, "TenderDetail", "new", created_at=created_at_val)
+
+    finally:
+        browser.close()
+        playwright_ctx.stop()
+
+    return listings
+
+
+def intake_tender247_direct(target_date=None) -> list[dict]:
     """Logs into Tender247 dashboard directly using saved session, parses listings, and saves to DB."""
     print(f"\n--- Intake: Fetching Tender247 directly from website ---")
     page, browser, playwright_ctx = get_authenticated_page(headless=True)
@@ -347,10 +418,12 @@ def intake_tender247_direct() -> list[dict]:
         listings = parse_tender247_dashboard(html)
         print(f"Parsed {len(listings)} listings from Tender247 dashboard.")
 
-        arrival_date = datetime.now().strftime("%Y-%m-%d")
+        arrival_date = target_date.strftime("%Y-%m-%d") if target_date else datetime.now().strftime("%Y-%m-%d")
+        created_at_val = (datetime.combine(target_date, datetime.min.time()) + timedelta(hours=12)).isoformat() if target_date else datetime.now().isoformat()
+        
         for idx, tender in enumerate(listings):
             print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
-            save_raw_feed(tender, "Tender247", "new")
+            save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
             
     finally:
         browser.close()
@@ -359,7 +432,7 @@ def intake_tender247_direct() -> list[dict]:
     return listings
 
 
-def run_intake(direct: bool = False):
+def run_intake(direct: bool = False, target_date=None):
     """Runs the Intake stage: fetches listings directly from websites or via emails."""
     print("\n==================================================")
     print("STAGE 1: TENDER INTAKE START")
@@ -369,17 +442,17 @@ def run_intake(direct: bool = False):
     
     if direct:
         print("Scraping website dashboards directly (bypassing emails)...")
-        intake_tenderdetail_direct()
-        intake_tender247_direct()
+        intake_tenderdetail_direct(target_date=target_date)
+        intake_tender247_direct(target_date=target_date)
         print("\n==================================================")
         print("STAGE 1: TENDER INTAKE COMPLETED")
         print("==================================================")
         return
 
     # Check GMail for new tender emails
-    print("Checking Tender247dashboard for today's tender alerts...")
+    print(f"Checking GMail for tender alerts on date: {target_date or 'today'}...")
     try:
-        emails = email_reader.fetch_todays_emails()
+        emails = email_reader.fetch_todays_emails(target_date=target_date)
     except Exception as e:
         print(f"ERROR: Failed to fetch emails: {e}")
         return
@@ -600,32 +673,43 @@ def run_stage2():
 
 
 def main():
-    if len(sys.argv) > 1:
-        arg = sys.argv[1].lower()
-        if arg == "--intake":
-            run_intake()
-        elif arg in ["--intake-direct", "--direct"]:
-            run_intake(direct=True)
-        elif arg in ["--stage1", "--stagea"]:
-            run_stage1()
-        elif arg in ["--stage2", "--stageb"]:
-            run_stage2()
-        elif arg == "--all":
-            run_intake()
-            run_stage1()
-            run_stage2()
-        else:
-            print("Unknown argument. Usage:")
-            print("  python3 pipeline.py --intake          (Runs email-based intake)")
-            print("  python3 pipeline.py --intake-direct   (Runs direct dashboard scraping, bypassing emails)")
-            print("  python3 pipeline.py --stage1          (Runs Stage A filter on 'new' tenders)")
-            print("  python3 pipeline.py --stage2          (Runs Stage B scorer on 'rules_passed' tenders)")
-            print("  python3 pipeline.py --all             (Runs intake, stage1, and stage2 sequentially)")
-    else:
-        # Default behavior: run all stages end-to-end
-        run_intake()
+    import argparse
+    parser = argparse.ArgumentParser(description="Tender Intelligence System Pipeline")
+    parser.add_argument("--intake", action="store_true", help="Runs email-based intake")
+    parser.add_argument("--intake-direct", "--direct", action="store_true", help="Runs direct dashboard scraping")
+    parser.add_argument("--stage1", "--stagea", action="store_true", help="Runs Stage A filter")
+    parser.add_argument("--stage2", "--stageb", action="store_true", help="Runs Stage B scorer")
+    parser.add_argument("--all", action="store_true", help="Runs intake, stage1, and stage2")
+    parser.add_argument("--date", type=str, help="Target date for intake/processing (YYYY-MM-DD)")
+    
+    args = parser.parse_args()
+    
+    target_date = None
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        except ValueError:
+            print("ERROR: Date must be in YYYY-MM-DD format")
+            sys.exit(1)
+            
+    # Default to running all if no specific step is specified
+    run_all = args.all or not (args.intake or args.intake_direct or args.stage1 or args.stage2)
+    
+    if run_all:
+        run_intake(target_date=target_date)
         run_stage1()
         run_stage2()
+    else:
+        if args.intake:
+            run_intake(target_date=target_date)
+        elif args.intake_direct:
+            run_intake(direct=True, target_date=target_date)
+        
+        if args.stage1:
+            run_stage1()
+            
+        if args.stage2:
+            run_stage2()
 
 
 if __name__ == "__main__":

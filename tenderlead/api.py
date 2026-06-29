@@ -1,6 +1,7 @@
 import frappe
 import subprocess
 import os
+from datetime import datetime
 
 @frappe.whitelist()
 def trigger_sync():
@@ -22,7 +23,7 @@ def trigger_sync():
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
-def trigger_intake_pipeline():
+def trigger_intake_pipeline(screening_date=None):
     """
     Manually triggers the intake scraper and filter pipeline in the background.
     Can be called via POST to /api/method/tenderlead.api.trigger_intake_pipeline
@@ -32,22 +33,69 @@ def trigger_intake_pipeline():
         frappe.throw("Not authorized to trigger this pipeline", frappe.PermissionError)
         
     try:
-        project_dir = "/home/kbp/Documents/Tenderlead"
-        python_bin = os.path.join(project_dir, ".venv", "bin", "python3")
-        pipeline_script = os.path.join(project_dir, "tenderlead", "pipeline.py")
-        
-        if not os.path.exists(python_bin):
-            python_bin = "python3"
-            
-        # Execute the pipeline in the background using subprocess
-        subprocess.Popen(
-            [python_bin, pipeline_script, "--intake-direct", "--stage1", "--stage2"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=project_dir,
-            start_new_session=True # Let it run detached
+        # Enqueue pipeline in background using Frappe's worker
+        frappe.enqueue(
+            "tenderlead.api.run_pipeline_and_sync",
+            queue="long",
+            timeout=1500,
+            screening_date=screening_date,
+            is_async=True
         )
         return {"status": "success", "message": "Tender intake and scoring pipeline started in the background"}
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Tender Intake Pipeline API Error")
         return {"status": "error", "message": str(e)}
+
+def run_pipeline_and_sync(screening_date=None):
+    """
+    Executes the intake, stage1 (filtering), stage2 (scoring) pipeline,
+    then syncs the results into ERPNext and updates the screening document stats.
+    """
+    start_time = datetime.now()
+    
+    # Set workspace directory in python path just in case
+    project_dir = "/home/kbp/Documents/Tenderlead"
+    import sys
+    if project_dir not in sys.path:
+        sys.path.append(project_dir)
+        
+    # Import pipeline stages and sync function
+    from tenderlead.pipeline import run_intake, run_stage1, run_stage2
+    from tenderlead.sync_tenders import sync
+    
+    # Parse target date
+    target_date = None
+    if screening_date:
+        try:
+            target_date = datetime.strptime(screening_date, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+
+    # Run intake, filtering, scoring
+    print(f"Running pipeline for date: {screening_date or 'today'}")
+    run_intake(target_date=target_date)
+    run_stage1()
+    run_stage2()
+    
+    # Sync SQLite staging to ERPNext Raw Tender Lead
+    print("Syncing SQLite database to ERPNext...")
+    sync()
+    
+    end_time = datetime.now()
+    duration = end_time - start_time
+    minutes, seconds = divmod(duration.seconds, 60)
+    time_taken_str = f"{minutes}m {seconds}s"
+    
+    # Update the Tnder Primary Screening document(s) matching this date
+    if screening_date:
+        screenings = frappe.get_all("Tnder Primary Screening", filters={"screening_date": screening_date})
+        for s in screenings:
+            try:
+                doc = frappe.get_doc("Tnder Primary Screening", s.name)
+                doc.time_taken = time_taken_str
+                # refresh_tenders recalculates statistics and saves the document
+                doc.refresh_tenders()
+            except Exception as e:
+                frappe.log_error(frappe.get_traceback(), f"Tender Screening update failed for {s.name}")
+
+

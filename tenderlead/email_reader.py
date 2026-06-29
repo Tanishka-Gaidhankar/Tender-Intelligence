@@ -132,11 +132,12 @@ def connect_to_gmail() -> imaplib.IMAP4_SSL:
     return mail
 
 
-def fetch_todays_emails() -> dict:
+def fetch_todays_emails(target_date=None) -> dict:
     """
-    Fetches the current business-day batch from each known tender source.
+    Fetches the business-day batch from each known tender source for the given target_date.
+    If target_date is not provided, it defaults to date.today().
 
-    Window used: yesterday 7:30 PM  →  now.
+    Window used: (target_date - 1 day) 7:30 PM  →  target_date 7:30 PM.
     This accounts for TenderDetail's evening (7-9 PM) digest belonging to
     the NEXT business day's batch, rather than relying on IMAP's literal
     calendar-date matching which would miss it.
@@ -160,8 +161,17 @@ def fetch_todays_emails() -> dict:
     A source is omitted from the result if no matching email was found
     in the window.
     """
+    if isinstance(target_date, str):
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+    elif not target_date:
+        target_date = date.today()
+
     mail = connect_to_gmail()
-    window_start = get_search_window_start()
+    
+    # Calculate business day window
+    yesterday = target_date - timedelta(days=1)
+    window_start = datetime.combine(yesterday, BUSINESS_DAY_CUTOFF)
+    window_end = datetime.combine(target_date, BUSINESS_DAY_CUTOFF)
 
     # IMAP SINCE only supports date granularity (no time-of-day), so we
     # fetch everything since that calendar date, then filter precisely
@@ -198,8 +208,8 @@ def fetch_todays_emails() -> dict:
             except (TypeError, ValueError):
                 continue
 
-            if received_at < window_start:
-                continue  # too old, outside this business day's window
+            if received_at < window_start or received_at > window_end:
+                continue  # outside this business day's window
 
             subject = decode_subject(msg.get("Subject"))
             subject_lower = subject.lower()

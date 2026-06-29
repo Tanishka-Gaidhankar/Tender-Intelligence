@@ -81,6 +81,14 @@ def run_pipeline_and_sync(screening_date=None):
     print("Syncing SQLite database to ERPNext...")
     sync()
     
+    # Sync SQLite staging to Frappe Cloud (demokbp.m.frappe.cloud)
+    try:
+        from tenderlead.sync_to_cloud import sync as sync_cloud
+        print("Syncing SQLite database to Frappe Cloud...")
+        sync_cloud()
+    except Exception as e:
+        print(f"Frappe Cloud sync failed/skipped: {e}")
+    
     end_time = datetime.now()
     duration = end_time - start_time
     minutes, seconds = divmod(duration.seconds, 60)

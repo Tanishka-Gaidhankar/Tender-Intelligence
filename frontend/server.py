@@ -181,7 +181,27 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
                 refresh_proc.stdout.close()
                 refresh_proc.wait()
                 
-                print("ERPNext synchronization complete.")
+                # 3. Sync to Cloud ERPNext (demokbp.m.frappe.cloud)
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write("Syncing scraped tenders to Cloud ERPNext (demokbp.m.frappe.cloud)...\n")
+                
+                workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                cloud_sync_proc = subprocess.Popen(
+                    [python_bin, "-m", "tenderlead.cloud_sync"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=workspace_dir
+                )
+                for line in iter(cloud_sync_proc.stdout.readline, ""):
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(line)
+                cloud_sync_proc.stdout.close()
+                cloud_sync_proc.wait()
+                
+                print("ERPNext local and cloud synchronization complete.")
             except Exception as sync_err:
                 print(f"Failed to sync to ERPNext: {sync_err}")
                 with open(log_path, "a", encoding="utf-8") as f:

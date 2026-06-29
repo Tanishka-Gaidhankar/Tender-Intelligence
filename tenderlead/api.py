@@ -73,7 +73,7 @@ def run_pipeline_and_sync(screening_date=None):
 
     # Run intake, filtering, scoring
     print(f"Running pipeline for date: {screening_date or 'today'}")
-    run_intake(target_date=target_date)
+    run_intake(direct=True, target_date=target_date)
     run_stage1()
     run_stage2()
     

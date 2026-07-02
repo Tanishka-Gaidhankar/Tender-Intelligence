@@ -7,6 +7,14 @@ import urllib.parse
 import subprocess
 import threading
 import sys
+import re
+import time
+from datetime import datetime
+
+# Add project root to sys.path to enable importing tenderlead modules
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
 
 PORT = 8080
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tender_intelligence.db"))
@@ -31,6 +39,12 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
         full_path = os.path.join(frontend_dir, clean_path)
         return full_path
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
@@ -47,9 +61,24 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
             self.get_scrape_status()
         elif path == "/api/scrape-log":
             self.get_scrape_log()
+        elif path == "/api/uploaded-tenders":
+            self.get_uploaded_tenders()
         else:
             # Fallback to standard static file serving
             super().do_GET()
+
+    def do_POST(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+
+        if path == "/api/upload-document":
+            self.upload_document()
+        elif path == "/api/uploaded-tenders/update-status":
+            self.update_uploaded_tender_status()
+        elif path == "/api/uploaded-tenders/remove":
+            self.remove_uploaded_tender()
+        else:
+            self.send_error_json(404, "Endpoint not found.")
 
     def trigger_scrape(self):
         global is_scraping
@@ -89,18 +118,18 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
         try:
             pipeline_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tenderlead", "pipeline.py"))
             python_bin = self.get_python_binary()
-            project_dir = os.path.dirname(pipeline_path)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
             def run_stage(args_list, stage_label):
                 """Runs one pipeline stage as subprocess, streaming output to log."""
-                print(f"Triggering: {python_bin} {pipeline_path} {' '.join(args_list)}")
+                print(f"Triggering: {python_bin} -m tenderlead.pipeline {' '.join(args_list)}")
                 proc = subprocess.Popen(
-                    [python_bin, pipeline_path] + args_list,
+                    [python_bin, "-m", "tenderlead.pipeline"] + args_list,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
-                    cwd=project_dir
+                    cwd=project_root
                 )
                 for line in iter(proc.stdout.readline, ""):
                     sys.stdout.write(line)
@@ -120,12 +149,12 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
             run_stage(["--stage1"], "Stage1 Filter")
             # Stage 3: AI scoring and lead promotion
             process = subprocess.Popen(
-                [python_bin, pipeline_path, "--stage2"],
+                [python_bin, "-m", "tenderlead.pipeline", "--stage2"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                cwd=project_dir
+                cwd=project_root
             )
             
             # Read line by line and write to file
@@ -149,7 +178,7 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # 1. Sync SQLite to ERPNext
                 sync_proc = subprocess.Popen(
-                    ["bench", "--site", "kbpcivil.in", "execute", "kbp_civil.sync_tenders.sync"],
+                    ["bench", "--site", "kbpcivil.in", "execute", "tenderlead.sync_tenders.sync"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -167,7 +196,7 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write("Refreshing ERPNext Screening Dashboard...\n")
                 refresh_proc = subprocess.Popen(
-                    ["bench", "--site", "kbpcivil.in", "execute", "frappe.get_single('Tnder Primary Screening').refresh_tenders"],
+                    ["bench", "--site", "kbpcivil.in", "execute", "tenderlead.api.refresh_dashboard"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -289,12 +318,25 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
             conn.close()
 
             tenders = []
+            STATUS_NORM = {
+                "lead_created":   "good_match",
+                "good_match":     "good_match",
+                "rules_rejected": "no_match",
+                "rejected_ai":    "no_match",
+                "no_match":       "no_match",
+                "ai_processing":  "unsure",
+                "rules_passed":   "unsure",
+                "unsure":         "unsure",
+                "new":            "unsure",
+            }
             for r in rows:
                 is_lead = r["lead_id"] is not None
-                status = "lead_created" if is_lead else r["status"]
+                raw_status = "good_match" if is_lead else r["status"]
+                status = STATUS_NORM.get(raw_status, raw_status)
                 # Arrival date: use date portion of created_at (first insert = first time seen)
                 raw_created = r["created_at"]
                 arrival_date = raw_created.split('T')[0] if raw_created and 'T' in raw_created else (raw_created or 'N/A')
+
                 tenders.append({
                     "tender_id": r["tender_id"],
                     "source": r["source"],
@@ -339,30 +381,30 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
             cursor.execute("SELECT count(*) FROM raw_tender_feed")
             total_intake = cursor.fetchone()[0]
 
-            # Count Stage 1 Passed (status in ('rules_passed', 'lead_created', 'rejected_ai', 'ai_processing'))
-            # Note: We also consider any tender in the tender_leads table as stage 1 passed
+            # Count Stage A Passed (unsure or above)
             cursor.execute("""
                 SELECT count(DISTINCT r.tender_id) FROM raw_tender_feed r
                 LEFT JOIN tender_leads l ON r.tender_id = l.tender_id
-                WHERE r.status IN ('rules_passed', 'lead_created', 'rejected_ai', 'ai_processing')
+                WHERE r.status IN ('unsure', 'good_match', 'no_match',
+                                   'rules_passed', 'lead_created', 'rejected_ai', 'ai_processing')
                    OR l.tender_id IS NOT NULL
             """)
             stage1_passed = cursor.fetchone()[0]
 
-            # Count Stage 1 Rejected
-            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status = 'rules_rejected'")
+            # Count rejected (Stage A keyword fail)
+            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status IN ('no_match', 'rules_rejected')")
             stage1_rejected = cursor.fetchone()[0]
 
-            # Count Stage 2 Promoted Leads (from tender_leads directly)
+            # Count Good Matches (score >= 70 — in tender_leads)
             cursor.execute("SELECT count(*) FROM tender_leads")
             stage2_leads = cursor.fetchone()[0]
 
-            # Count Stage 2 Rejected
-            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status = 'rejected_ai'")
+            # Count AI-scored No Matches (score < 70)
+            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status IN ('no_match', 'rejected_ai') AND ai_score IS NOT NULL")
             stage2_rejected = cursor.fetchone()[0]
 
-            # Count Processing
-            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status IN ('new', 'ai_processing')")
+            # Count still Unsure (pending scoring)
+            cursor.execute("SELECT count(*) FROM raw_tender_feed WHERE status IN ('new', 'unsure', 'ai_processing')")
             processing = cursor.fetchone()[0]
 
             conn.close()
@@ -395,6 +437,321 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error_json(500, f"Error reading settings: {str(e)}")
 
+    def parse_multipart(self):
+        content_type = self.headers.get('Content-Type', '')
+        if 'multipart/form-data' not in content_type:
+            return None, None
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+
+        from email.parser import BytesParser
+        from email.policy import default
+        import re
+
+        headers_bytes = b"Content-Type: " + content_type.encode('utf-8') + b"\r\n\r\n"
+        msg = BytesParser(policy=default).parsebytes(headers_bytes + body)
+
+        title = ""
+        files = []
+
+        if msg.is_multipart():
+            for part in msg.iter_parts():
+                disposition = part.get("Content-Disposition", "")
+                name_match = re.search(r'name="([^"]+)"', disposition)
+                if not name_match:
+                    continue
+                field_name = name_match.group(1)
+
+                if field_name == "title":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        title = payload.decode('utf-8', errors='ignore').strip()
+                elif field_name == "document":
+                    file_name_match = re.search(r'filename="([^"]+)"', disposition)
+                    f_name = ""
+                    if file_name_match:
+                        f_name = file_name_match.group(1)
+                    f_data = part.get_payload(decode=True)
+                    if f_name and f_data:
+                        files.append((f_name, f_data))
+        
+        return title, files
+
+    def upload_document(self):
+        try:
+            title, files = self.parse_multipart()
+            if not title or not files:
+                self.send_error_json(400, "Missing title, files, or invalid form data.")
+                return
+
+            uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+            os.makedirs(uploads_dir, exist_ok=True)
+
+            file_names = []
+            extracted_text_blocks = []
+
+            import document_extractor_helper
+            # Load LlamaParse key from settings file
+            llama_key = None
+            settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tender_rules_settings.json")
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, "r", encoding="utf-8") as f:
+                        settings_data = json.load(f)
+                        parser_conf = settings_data.get("parser", {})
+                        llama_key = parser_conf.get("llama_cloud_api_key")
+                        if not llama_key:
+                            llama_key = settings_data.get("llm", {}).get("llama_cloud_api_key")
+                except Exception as e:
+                    print(f"Error reading settings: {e}")
+
+            import document_extractor_helper
+
+            for file_name, file_data in files:
+                file_names.append(file_name)
+                safe_filename = f"{int(time.time())}_{file_name}"
+                file_path = os.path.join(uploads_dir, safe_filename)
+                with open(file_path, "wb") as f:
+                    f.write(file_data)
+
+                # Try LlamaParse if key is provided
+                doc_text = ""
+                if llama_key and not llama_key.startswith("YOUR_") and len(llama_key.strip()) > 10:
+                    doc_text = document_extractor_helper.parse_with_llamaparse(file_path, llama_key)
+                
+                # Fallback to local parsing
+                if not doc_text or not doc_text.strip():
+                    ext = os.path.splitext(file_name)[1].lower()
+                    if ext == ".txt":
+                        try:
+                            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                                doc_text = f.read()
+                        except Exception as txt_err:
+                            print(f"Error reading plain text file: {txt_err}")
+                    else:
+                        try:
+                            doc_text = document_extractor_helper.extract_full_text(file_path)
+                        except Exception as ext_err:
+                            print(f"Failed to use extract_full_text: {ext_err}")
+
+                # Limit per-document length using get_relevant_content to prevent token overflow
+                if doc_text and doc_text.strip():
+                    excerpt = document_extractor_helper.get_relevant_content(doc_text.strip(), max_chars=12000)
+                    extracted_text_blocks.append(f"=== Document: {file_name} ===\n{excerpt}")
+
+            combined_text = "\n\n".join(extracted_text_blocks)
+            file_names_str = ", ".join(file_names)
+            
+            # Fallback if no text could be extracted at all
+            if not combined_text or len(combined_text.strip()) < 10:
+                self.send_error_json(400, "No readable text could be extracted from the uploaded document(s). Please verify file formats.")
+                return
+
+            scope = None
+            eligibility = None
+            checklist = None
+
+            # 1. Attempt AI LLM extraction if keys are available
+            import llm_client
+            llm_config = llm_client.load_llm_config()
+            has_llm_keys = bool(llm_config.get("api_key") or os.getenv("COHERE_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or llm_config.get("cohere_api_key") or llm_config.get("deepseek_api_key"))
+
+            if has_llm_keys:
+                print("Attempting AI LLM extraction...")
+                system_prompt = (
+                     "you are a senior tender/procurement analyst who has read thousands of government and corporate RFPs, tenders, and bid documents across sectors (construction, IT, consultancy, supply, EPC, PMC, etc). You are meticulous, skeptical of assumptions, and never invent facts that aren't grounded in the documents.\n"
+
+"CONTEXT\n"
+'''You will be given every document belonging to ONE tender — this may include the main tender notice/RFP, corrigenda, addenda, annexures, eligibility criteria sheets, forms, BOQs, and AI-generated summaries. Each document is marked with a "--- Document: <filename> ---" label. Document sets can be long, messy, scanned/OCR'd, inconsistently formatted, and spread across many pages or files. Treat every document as potentially relevant — do not skip content because it looks dense or repetitive.\n'''
+
+"READING STRATEGY (do this before answering)\n"
+"1. Identify what each attached document is (main notice, corrigendum, annexure, eligibility sheet, form, summary, etc).\n"
+'''2. If a corrigendum or addendum contradicts or amends the original document (dates, values, eligibility thresholds, scope changes), the corrigendum/addendum takes precedence. Use the corrected figure and note the change in the relevant item's text (e.g. "turnover requirement revised to INR 40 Cr per corrigendum").\n'''
+
+'''3. Terminology varies by issuer — "Scope of Work" may appear as "Terms of Reference,\n" "Nature of Work," "Objectives," or not be labeled at all. "Qualification Criteria" may appear as "Eligibility Criteria," "Pre-Qualification," or "Bidder Requirements." "Checklist" may appear as "Documents to be Submitted," "Annexure List," or a forms index. Recognize these regardless of label.\n'''
+'''4. Ignore boilerplate that isn't substantive (cover pages, tables of contents, generic legal disclaimers unrelated to eligibility or submissions).\n'''
+
+'''YOUR TASK — produce three clearly separate, non-overlapping parts:\n'''
+
+'''1. SCOPE OF WORK: What must the winning bidder actually deliver? Compose this yourself — it is rarely handed to you as a ready paragraph. Draw on the project title, category/products, deliverables, site/location, duration, phases (e.g. construction + O&M), and any technical description. Write 3-6 sentences of real prose describing the work, not a copied table row or field list.\n'''
+
+'''2. QUALIFICATION CRITERIA: Every eligibility requirement a bidder must meet BEFORE their bid is even considered — minimum turnover, years of experience, similar-project experience (with thresholds), certifications, registrations, financial standing, JV/consortium rules, technical capacity. Each as its own item. Preserve exact numbers, currencies, and time periods precisely as stated — do not round or approximate.\n'''
+
+'''3. DOCUMENT CHECKLIST: Every document, form, certificate, annexure, or declaration the bidder must submit WITH the bid. Each as its own item, using the form/annexure name or number as given if one exists.\n'''
+
+'''SOURCING\n'''
+'''If more than one document is attached, tag each qualification-criteria and checklist item with the filename it came from. For scope of work, list which document(s) contributed to it. If only one document is attached, still populate the source field with that filename."\n'''
+                    "You are an expert civil engineering analyst reading a tender document.\n"
+                    "Your task is to extract three factors: the scope of work, the eligibility criteria, and the checklist of documents required for bidding.\n"
+                    "\n"
+                    "CRITICAL INSTRUCTIONS FOR ELIGIBILITY CRITERIA:\n"
+                    "- Identify the most important qualification and eligibility criteria in the document (such as turnover, experience, registrations, JV rules, MSME exemptions, etc.).\n"
+                    "- Format the eligibility criteria as a list of Question & Answer pairs based on the document contents. Frame each requirement as a question the bidder would ask, followed by the exact answer from the document.\n"
+                    "- Use the format:\n"
+                    "  **Question:** [The eligibility question]\n"
+                    "  [The answer containing exact numbers, values, and rules]\n"
+                    "- Provide between 4 to 8 relevant question-and-answer pairs based on the document. Do not use generic sample questions if they are not in the document.\n"
+                    "\n"
+                     "CRITICAL INSTRUCTIONS FOR DOCUMENT CHECKLIST:\n"
+                    "Every document/checklist has to be mentioned. There can be an heading for Document List / Checklist. so retrieve every document mentioned.\n"
+                    "\n"
+                    "You must respond ONLY with a valid JSON object. Do not include any other text before or after the JSON. The JSON keys must be exactly:\n"
+                    "{\n"
+                    '  "scope_of_work": "Detailed scope of work summary...",\n'
+                    '  "eligibility_criteria": "Formatted Q&A criteria...",\n'
+                    '  "document_checklist": [\n'
+                    '    "Checklist item 1...",\n'
+                    '    "Checklist item 2..."\n'
+                    '  ]\n'
+                    "}"
+                )
+                truncated_text = combined_text[:150000]
+                user_prompt = (
+                    f"Tender Title: {title}\n\n"
+                    f"--- TENDER DOCUMENT TEXT ---\n{truncated_text}\n--- END OF DOCUMENT ---\n\n"
+                    "Extract Scope, Eligibility Criteria Q&A, and Document Checklist as JSON."
+                )
+                try:
+                    llm_response = llm_client.call_llm(user_prompt, system_prompt, json_mode=True)
+                    if llm_response and llm_response.strip():
+                        parsed = json.loads(llm_response)
+                        scope = parsed.get("scope_of_work")
+                        eligibility = parsed.get("eligibility_criteria")
+                        
+                        chk_obj = parsed.get("document_checklist") or parsed.get("checklist")
+                        if isinstance(chk_obj, list):
+                            checklist = chk_obj
+                        elif chk_obj:
+                            checklist = [str(chk_obj)]
+                            
+                        print("AI LLM extraction succeeded!")
+                except Exception as llm_err:
+                    print(f"AI LLM extraction failed: {llm_err}. Falling back to heuristic rule-based extractor.")
+
+            # 2. Fallback to local heuristic extractor if LLM fails or is disabled
+            if not scope or not eligibility or not checklist:
+                print("Running local heuristic rule-based extraction fallback...")
+                import document_extractor_helper
+                heuristics = document_extractor_helper.extract_heuristically(combined_text, title)
+                if not scope:
+                    scope = heuristics["scope_of_work"]
+                if not eligibility:
+                    eligibility = heuristics["eligibility_criteria"]
+                if not checklist:
+                    checklist = heuristics["document_checklist"]
+
+            if not scope or not eligibility or not checklist:
+                self.send_error_json(500, "Failed to parse Scope, Qualification, or Checklist parameters from the document text.")
+                return
+
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            created_at = datetime.now().isoformat()
+            cursor.execute("""
+                INSERT INTO uploaded_tenders (title, scope_of_work, eligibility, document_checklist, status, file_name, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                title,
+                scope,
+                eligibility,
+                json.dumps(checklist),
+                'pending',
+                file_names_str,
+                created_at
+            ))
+            row_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            result = {
+                "id": row_id,
+                "title": title,
+                "scope_of_work": scope,
+                "eligibility_criteria": eligibility,
+                "document_checklist": checklist,
+                "status": "pending",
+                "file_name": file_names_str,
+                "created_at": created_at
+            }
+            self.send_json_response(result)
+
+        except Exception as e:
+            self.send_error_json(500, f"Failed to upload and process document: {str(e)}")
+
+    def get_uploaded_tenders(self):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM uploaded_tenders ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            conn.close()
+
+            tenders = []
+            for r in rows:
+                try:
+                    checklist = json.loads(r["document_checklist"])
+                except:
+                    checklist = []
+                tenders.append({
+                    "id": r["id"],
+                    "title": r["title"],
+                    "scope_of_work": r["scope_of_work"],
+                    "eligibility_criteria": r["eligibility"],
+                    "document_checklist": checklist,
+                    "status": r["status"],
+                    "file_name": r["file_name"],
+                    "created_at": r["created_at"]
+                })
+            self.send_json_response(tenders)
+        except Exception as e:
+            self.send_error_json(500, f"Database error: {str(e)}")
+
+    def update_uploaded_tender_status(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode('utf-8'))
+            
+            tender_id = data.get("id")
+            status = data.get("status")
+            
+            if not tender_id or status not in ("approved", "rejected", "pending"):
+                self.send_error_json(400, "Invalid parameters.")
+                return
+                
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE uploaded_tenders SET status = ? WHERE id = ?", (status, tender_id))
+            conn.commit()
+            conn.close()
+            
+            self.send_json_response({"status": "success", "message": f"Tender {tender_id} updated to {status}."})
+        except Exception as e:
+            self.send_error_json(500, f"Database error: {str(e)}")
+
+    def remove_uploaded_tender(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode('utf-8'))
+            
+            tender_id = data.get("id")
+            if not tender_id:
+                self.send_error_json(400, "Invalid parameters.")
+                return
+                
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM uploaded_tenders WHERE id = ?", (tender_id,))
+            conn.commit()
+            conn.close()
+            
+            self.send_json_response({"status": "success", "message": f"Tender {tender_id} removed successfully."})
+        except Exception as e:
+            self.send_error_json(500, f"Database error: {str(e)}")
+
     def send_json_response(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -410,9 +767,35 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps({"error": message}).encode("utf-8"))
 
 
+def init_uploader_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS uploaded_tenders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                scope_of_work TEXT,
+                eligibility TEXT,
+                document_checklist TEXT,
+                status TEXT DEFAULT 'pending',
+                file_name TEXT,
+                created_at TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("Uploader database table initialized successfully.")
+    except Exception as e:
+        print(f"Error initializing uploader database: {e}")
+
+
 if __name__ == "__main__":
     # Ensure current working directory is the frontend directory
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Initialize uploader database table
+    init_uploader_db()
     
     # Allow address reuse to prevent "Address already in use" errors on restart
     socketserver.TCPServer.allow_reuse_address = True

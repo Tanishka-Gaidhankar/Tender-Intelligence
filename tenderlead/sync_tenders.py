@@ -88,16 +88,16 @@ def sync():
     
     # Mapping for status values — simplified to 3 outcomes
     status_map = {
-        "new":          "Unsure",
-        "unsure":       "Unsure",
+        "new":          "New",
+        "unsure":       "May be",
         "good_match":   "Good Match",
         "no_match":     "No Match",
         # Legacy values (kept for backward compat with existing DB rows)
         "lead_created": "Good Match",
-        "rules_passed": "Unsure",
+        "rules_passed": "May be",
         "rules_rejected": "No Match",
         "rejected_ai":  "No Match",
-        "ai_processing": "Unsure",
+        "ai_processing": "May be",
     }
     
     count_inserted = 0

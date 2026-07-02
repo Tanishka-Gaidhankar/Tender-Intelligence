@@ -94,12 +94,12 @@ def run_pipeline_and_sync(screening_date=None):
     minutes, seconds = divmod(duration.seconds, 60)
     time_taken_str = f"{minutes}m {seconds}s"
     
-    # Update the Tnder Primary Screening document(s) matching this date
+    # Update the Tender Primary Screening document(s) matching this date
     if screening_date:
-        screenings = frappe.get_all("Tnder Primary Screening", filters={"screening_date": screening_date})
+        screenings = frappe.get_all("Tender Primary Screening", filters={"screening_date": screening_date})
         for s in screenings:
             try:
-                doc = frappe.get_doc("Tnder Primary Screening", s.name)
+                doc = frappe.get_doc("Tender Primary Screening", s.name)
                 doc.time_taken = time_taken_str
                 # refresh_tenders recalculates statistics and saves the document
                 doc.refresh_tenders()

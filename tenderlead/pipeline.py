@@ -23,6 +23,7 @@ from .scrapers.tender247_session import get_authenticated_page
 from .scrapers.tenderdetail_session import get_authenticated_page as get_tenderdetail_page, scrape_all_query_tenders, _is_dashboard
 from .scrapers.tenderdetail_detail_scraper import fetch_tenderdetail_detail
 from .scrapers.tenderdetail_scraper import parse_tenderdetail_listings
+from .stage_b.pipeline_stage_b import run_stage_b
 
 DB_FILE = "tender_intelligence.db"
 SETTINGS_FILE = "tender_rules_settings.json"
@@ -542,11 +543,11 @@ def run_stage1():
             passed, rationale = evaluate_tender247(tender, company_scope)
             
         if passed == "no":
-            print(f"    Rejected at Stage 1: {rationale}")
-            save_raw_feed(tender, source, "rules_rejected", ai_rationale=rationale)
+            print(f"    Rejected at Stage A: {rationale}")
+            save_raw_feed(tender, source, "no_match", ai_rationale=rationale)
         else:
-            print(f"    Passed Stage 1: {rationale}")
-            save_raw_feed(tender, source, "rules_passed")
+            print(f"    Passed Stage A: {rationale}")
+            save_raw_feed(tender, source, "unsure")
             
     print("\n==================================================")
     print("STAGE 2 (STAGE A): FILTER COMPLETED")
@@ -569,19 +570,19 @@ def run_stage2():
     cursor.execute("""
         SELECT tender_id, source, title, authority, location, value, emd, due_date, link 
         FROM raw_tender_feed 
-        WHERE status = 'rules_passed'
+        WHERE status = 'unsure'
     """)
     rows = cursor.fetchall()
     conn.close()
     
     if not rows:
-        print("No 'rules_passed' tenders found in the database for Stage B Scoring.")
+        print("No 'unsure' tenders found in the database for Stage A AI scoring.")
         print("\n==================================================")
         print("STAGE 3 (STAGE B): SCORING & PROMOTION COMPLETED")
         print("==================================================")
         return
         
-    print(f"Found {len(rows)} tenders with 'rules_passed' status to evaluate.")
+    print(f"Found {len(rows)} tenders with 'unsure' status to evaluate.")
     
     threshold = settings.get("ai_score_threshold", 70)
     
@@ -618,7 +619,7 @@ def run_stage2():
             print(f"  [{idx+1}/{len(rows)}] Source: {source} | ID: {tender_id} | Title: {title[:60]}...")
             
             # 4. Fetch detail details
-            save_raw_feed(tender, source, "ai_processing")
+            save_raw_feed(tender, source, "unsure")
             
             if source == "TenderDetail":
                 print("    Fetching detail page...")
@@ -627,7 +628,7 @@ def run_stage2():
                     tender.update(detail)
                 else:
                     print("    Failed to fetch detail page. Skipping Stage 2.")
-                    save_raw_feed(tender, source, "rules_passed")
+                    save_raw_feed(tender, source, "unsure")
                     continue
             else:
                 if link:
@@ -638,11 +639,11 @@ def run_stage2():
                         tender["scope_of_work"] = title  # Fallback to title as scope
                     else:
                         print("    Failed to fetch AI summary. Skipping Stage 2.")
-                        save_raw_feed(tender, source, "rules_passed")
+                        save_raw_feed(tender, source, "unsure")
                         continue
                 else:
                     print("    No AI Summary URL found. Skipping Stage 2.")
-                    save_raw_feed(tender, source, "rejected_ai", ai_rationale="No AI Summary link available.")
+                    save_raw_feed(tender, source, "no_match", ai_rationale="No AI Summary link available.")
                     continue
                     
             # 5. Stage 2 Scoring
@@ -652,11 +653,11 @@ def run_stage2():
             
             if overall_score >= threshold:
                 print(f"    ===> Promoted to Tender Lead! Score {overall_score} >= {threshold}")
-                save_raw_feed(tender, source, "lead_created", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))
+                save_raw_feed(tender, source, "good_match", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))
                 save_tender_lead(tender, source, score_results, link)
             else:
-                print(f"    Rejected at Stage 2: score {overall_score} < {threshold}")
-                save_raw_feed(tender, source, "rejected_ai", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))
+                print(f"    No Match at AI scoring: score {overall_score} < {threshold}")
+                save_raw_feed(tender, source, "no_match", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))
                 
     finally:
         if browser:
@@ -678,8 +679,9 @@ def main():
     parser.add_argument("--intake", action="store_true", help="Runs email-based intake")
     parser.add_argument("--intake-direct", "--direct", action="store_true", help="Runs direct dashboard scraping")
     parser.add_argument("--stage1", "--stagea", action="store_true", help="Runs Stage A filter")
-    parser.add_argument("--stage2", "--stageb", action="store_true", help="Runs Stage B scorer")
-    parser.add_argument("--all", action="store_true", help="Runs intake, stage1, and stage2")
+    parser.add_argument("--stage2", "--stageb", action="store_true", help="Runs Stage A AI scoring (promotes to leads)")
+    parser.add_argument("--stageb-docs", action="store_true", help="Runs Stage B document intelligence (reads actual tender PDFs)")
+    parser.add_argument("--all", action="store_true", help="Runs intake, stage1, stage2, and stage B docs")
     parser.add_argument("--date", type=str, help="Target date for intake/processing (YYYY-MM-DD)")
     
     args = parser.parse_args()
@@ -693,12 +695,16 @@ def main():
             sys.exit(1)
             
     # Default to running all if no specific step is specified
-    run_all = args.all or not (args.intake or args.intake_direct or args.stage1 or args.stage2)
+    run_all = args.all or not (
+        args.intake or args.intake_direct or args.stage1 or args.stage2
+        or getattr(args, "stageb_docs", False)
+    )
     
     if run_all:
         run_intake(target_date=target_date)
         run_stage1()
         run_stage2()
+        run_stage_b()
     else:
         if args.intake:
             run_intake(target_date=target_date)
@@ -710,6 +716,9 @@ def main():
             
         if args.stage2:
             run_stage2()
+
+        if getattr(args, "stageb_docs", False):
+            run_stage_b()
 
 
 if __name__ == "__main__":

@@ -86,14 +86,18 @@ def sync():
     rows = cursor.fetchall()
     print(f"Found {len(rows)} tenders in SQLite staging database.")
     
-    # Mapping for status values
+    # Mapping for status values — simplified to 3 outcomes
     status_map = {
-        "new": "",
+        "new":          "Unsure",
+        "unsure":       "Unsure",
+        "good_match":   "Good Match",
+        "no_match":     "No Match",
+        # Legacy values (kept for backward compat with existing DB rows)
         "lead_created": "Good Match",
-        "rules_passed": "May be",
+        "rules_passed": "Unsure",
         "rules_rejected": "No Match",
-        "rejected_ai": "No Match",
-        "ai_processing": "May be"
+        "rejected_ai":  "No Match",
+        "ai_processing": "Unsure",
     }
     
     count_inserted = 0

@@ -107,3 +107,21 @@ def run_pipeline_and_sync(screening_date=None):
                 frappe.log_error(frappe.get_traceback(), f"Tender Screening update failed for {s.name}")
 
 
+def refresh_dashboard(screening_date=None):
+    """
+    Refreshes the Tender Primary Screening dashboard for a given date (defaults to today).
+    """
+    if not screening_date:
+        screening_date = frappe.utils.today()
+    screenings = frappe.get_all("Tender Primary Screening", filters={"screening_date": screening_date})
+    for s in screenings:
+        try:
+            doc = frappe.get_doc("Tender Primary Screening", s.name)
+            doc.refresh_tenders()
+            print(f"Refreshed Tender Primary Screening: {s.name}")
+        except Exception as e:
+            frappe.log_error(frappe.get_traceback(), f"Tender Screening refresh failed for {s.name}")
+            print(f"Error refreshing {s.name}: {e}")
+
+
+

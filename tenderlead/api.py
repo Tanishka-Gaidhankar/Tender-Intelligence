@@ -1,127 +1,166 @@
 import frappe
-import subprocess
-import os
-from datetime import datetime
+from frappe.utils import now_datetime
+import json
 
 @frappe.whitelist()
-def trigger_sync():
-    """
-    Manually triggers the tender synchronization from the local SQLite database.
-    Can be called via POST to /api/method/tenderlead.api.trigger_sync
-    """
+def trigger_stage1_scan(docname):
+    """Triggers Stage 1 Playwright scraper for the given Tender Primary Screening doc."""
+    doc = frappe.get_doc("Tender Primary Screening", docname)
+    
+    # Create a job log entry
+    job = frappe.get_doc({
+        "doctype": "Scrape Job Log",
+        "job_type": "Stage 1",
+        "status": "Queued",
+        "started_at": now_datetime()
+    }).insert(ignore_permissions=True)
+    
+    # Publish Socket.IO trigger event to local agent
+    frappe.publish_realtime(
+        event="stage1_trigger",
+        message={
+            "job_id": job.name,
+            "docname": docname,
+            "source": doc.tender_source,
+            "screening_date": doc.screening_date
+        }
+    )
+    return {"status": "success", "job_id": job.name}
+
+@frappe.whitelist()
+def ingest_stage1_results(job_id, docname, tenders):
+    """Ingests scraped tenders, populates the child table, and triggers Claude AI scoring."""
+    job = frappe.get_doc("Scrape Job Log", job_id)
+    job.status = "Running"
+    job.save(ignore_permissions=True)
+    
     try:
-        # Import the local sync function (e.g. if you migrate sync_tenders.py to the app)
-        # For now, we will dynamically try to import and execute it from this package
-        from tenderlead.sync_tenders import sync
-        sync()
-        return {"status": "success", "message": "Tenders synced successfully from SQLite database"}
-    except ImportError:
-        # Fallback in case sync_tenders is placed differently
-        return {"status": "error", "message": "Module tenderlead.sync_tenders not found"}
+        tenders_list = json.loads(tenders)
+        parent_doc = frappe.get_doc("Tender Primary Screening", docname)
+        
+        # Clear existing entries in the child table to avoid duplicates on re-run
+        parent_doc.set("raw_tender_leads", [])
+        
+        for t in tenders_list:
+            # 1. Create or update the global Raw Tender Lead document
+            if not frappe.db.exists("Raw Tender Lead", t["tender_id"]):
+                lead_doc = frappe.get_doc({
+                    "doctype": "Raw Tender Lead",
+                    "tender_id": t["tender_id"],
+                    "source": t.get("source"),
+                    "title": t.get("title"),
+                    "authority": t.get("authority"),
+                    "location": t.get("location"),
+                    "value": t.get("value"),
+                    "emd": t.get("emd"),
+                    "due_date": t.get("due_date"),
+                    "link": t.get("link"),
+                    "status": "New"
+                })
+                lead_doc.insert(ignore_permissions=True)
+            
+            # 2. Add reference to the Tender Primary Screening child table
+            parent_doc.append("raw_tender_leads", {
+                "tender_id": t["tender_id"],
+                "tender_title": t.get("title"),
+                "due_date": t.get("due_date"),
+                "authority": t.get("authority"),
+                "link": t.get("link"),
+                "source": t.get("source"),
+                "value": t.get("value")
+            })
+            
+        parent_doc.save(ignore_permissions=True)
+        
+        # 3. Call Claude AI stage 1 filter/scoring on new items & update stats
+        # (This executes your existing stage 1 AI scoring pipeline helper)
+        from tenderlead.api import run_ai_filtering_and_stats
+        run_ai_filtering_and_stats(parent_doc)
+        
+        job.status = "Completed"
+        job.finished_at = now_datetime()
+        job.save(ignore_permissions=True)
+        return {"status": "success"}
+        
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Tender Sync API Error")
+        frappe.log_error(frappe.get_traceback(), "Stage 1 Ingestion Error")
+        report_job_failure(job_id, str(e))
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
-def trigger_intake_pipeline(screening_date=None):
-    """
-    Manually triggers the intake scraper and filter pipeline in the background.
-    Can be called via POST to /api/method/tenderlead.api.trigger_intake_pipeline
-    """
-    # Restrict trigger to System Managers
-    if "System Manager" not in frappe.get_roles():
-        frappe.throw("Not authorized to trigger this pipeline", frappe.PermissionError)
+def trigger_stage2_scan(docname):
+    """Triggers Stage 2 Playwright document downloader for approved/unresolved tenders."""
+    parent_doc = frappe.get_doc("Tender Primary Screening", docname)
+    
+    # Collect tender IDs that require document scraping (e.g. status = "Good Match" or "May be")
+    tenders_to_scrape = []
+    for row in parent_doc.raw_tender_leads:
+        # Check global lead status to see if it was approved/shortlisted
+        lead_status = frappe.db.get_value("Raw Tender Lead", row.tender_id, "status")
+        if lead_status in ["Good Match", "May be"]:
+            tenders_to_scrape.append({
+                "tender_id": row.tender_id,
+                "link": row.link
+            })
+            
+    if not tenders_to_scrape:
+        frappe.throw("No approved/shortlisted tenders found for secondary screening.")
         
+    job = frappe.get_doc({
+        "doctype": "Scrape Job Log",
+        "job_type": "Stage 2",
+        "status": "Queued",
+        "started_at": now_datetime()
+    }).insert(ignore_permissions=True)
+    
+    frappe.publish_realtime(
+        event="stage2_trigger",
+        message={
+            "job_id": job.name,
+            "docname": docname,
+            "tenders": tenders_to_scrape
+        }
+    )
+    return {"status": "success", "job_id": job.name}
+
+@frappe.whitelist()
+def report_job_failure(job_id, error_message):
+    """Called if the agent throws an error during execution."""
+    job = frappe.get_doc("Scrape Job Log", job_id)
+    job.status = "Failed"
+    job.error_message = error_message
+    job.finished_at = now_datetime()
+    job.save(ignore_permissions=True)
+    return {"status": "success"}
+
+@frappe.whitelist()
+def ingest_stage2_documents(job_id, tender_id):
+    """Whitelisted API for direct file uploads."""
+    job = frappe.get_doc("Scrape Job Log", job_id)
+    job.status = "Running"
+    job.save(ignore_permissions=True)
+    
     try:
-        # Enqueue pipeline in background using Frappe's worker
-        frappe.enqueue(
-            "tenderlead.api.run_pipeline_and_sync",
-            queue="long",
-            timeout=1500,
-            screening_date=screening_date,
-            is_async=True
-        )
-        return {"status": "success", "message": "Tender intake and scoring pipeline started in the background"}
+        if not frappe.request.files:
+            raise ValueError("No files attached to request")
+            
+        for file_key in frappe.request.files:
+            file_data = frappe.request.files[file_key]
+            # Save file attachment to ERPNext attached to 'Raw Tender Lead'
+            saved_file = frappe.get_doc({
+                "doctype": "File",
+                "file_name": file_data.filename,
+                "attached_to_doctype": "Raw Tender Lead",
+                "attached_to_name": tender_id,
+                "content": file_data.stream.read(),
+                "is_private": 0
+            })
+            saved_file.save(ignore_permissions=True)
+            
+        job.status = "Completed"
+        job.finished_at = now_datetime()
+        job.save(ignore_permissions=True)
+        return {"status": "success"}
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Tender Intake Pipeline API Error")
+        report_job_failure(job_id, str(e))
         return {"status": "error", "message": str(e)}
-
-def run_pipeline_and_sync(screening_date=None):
-    """
-    Executes the intake, stage1 (filtering), stage2 (scoring) pipeline,
-    then syncs the results into ERPNext and updates the screening document stats.
-    """
-    start_time = datetime.now()
-    
-    # Set workspace directory in python path just in case
-    project_dir = "/home/kbp/Documents/Tenderlead"
-    import sys
-    if project_dir not in sys.path:
-        sys.path.append(project_dir)
-        
-    # Import pipeline stages and sync function
-    from tenderlead.pipeline import run_intake, run_stage1, run_stage2
-    from tenderlead.sync_tenders import sync
-    
-    # Parse target date
-    target_date = None
-    if screening_date:
-        try:
-            target_date = datetime.strptime(screening_date, "%Y-%m-%d").date()
-        except ValueError:
-            pass
-
-    # Run intake, filtering, scoring
-    print(f"Running pipeline for date: {screening_date or 'today'}")
-    run_intake(direct=True, target_date=target_date)
-    run_stage1()
-    run_stage2()
-    
-    # Sync SQLite staging to ERPNext Raw Tender Lead
-    print("Syncing SQLite database to ERPNext...")
-    sync()
-    
-    # Sync SQLite staging to Frappe Cloud (demokbp.m.frappe.cloud)
-    try:
-        from tenderlead.sync_to_cloud import sync as sync_cloud
-        print("Syncing SQLite database to Frappe Cloud...")
-        sync_cloud()
-    except Exception as e:
-        print(f"Frappe Cloud sync failed/skipped: {e}")
-    
-    end_time = datetime.now()
-    duration = end_time - start_time
-    minutes, seconds = divmod(duration.seconds, 60)
-    time_taken_str = f"{minutes}m {seconds}s"
-    
-    # Update the Tender Primary Screening document(s) matching this date
-    if screening_date:
-        screenings = frappe.get_all("Tender Primary Screening", filters={"screening_date": screening_date})
-        for s in screenings:
-            try:
-                doc = frappe.get_doc("Tender Primary Screening", s.name)
-                doc.time_taken = time_taken_str
-                # refresh_tenders recalculates statistics and saves the document
-                doc.refresh_tenders()
-            except Exception as e:
-                frappe.log_error(frappe.get_traceback(), f"Tender Screening update failed for {s.name}")
-
-
-def refresh_dashboard(screening_date=None):
-    """
-    Refreshes the Tender Primary Screening dashboard for a given date (defaults to today).
-    """
-    if not screening_date:
-        screening_date = frappe.utils.today()
-    screenings = frappe.get_all("Tender Primary Screening", filters={"screening_date": screening_date})
-    for s in screenings:
-        try:
-            doc = frappe.get_doc("Tender Primary Screening", s.name)
-            doc.refresh_tenders()
-            print(f"Refreshed Tender Primary Screening: {s.name}")
-        except Exception as e:
-            frappe.log_error(frappe.get_traceback(), f"Tender Screening refresh failed for {s.name}")
-            print(f"Error refreshing {s.name}: {e}")
-
-
-

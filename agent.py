@@ -19,7 +19,7 @@ headers = {"Authorization": f"token {API_KEY}:{API_SECRET}"}
 sio = socketio.Client(logger=True, engineio_logger=True)
 job_queue = queue.Queue()
 
-def run_stage1_listings(source, screening_date):
+def run_stage1_listings(source):
     """Runs the Playwright scraper to get listing data."""
     results = []
     if source == "TenderDetail":
@@ -110,16 +110,16 @@ def worker():
         try:
             if job_type == "stage1":
                 source = job.get("source")
-                screening_date = job.get("screening_date")
-                print(f"[Agent] Stage 1 for source: {source}, date: {screening_date}")
+                print(f"[Agent] Stage 1 for source: {source}")
                 
-                results = run_stage1_listings(source, screening_date)
+                results = run_stage1_listings(source)
                 
-                # Ingest results directly
+                # Ingest results directly with timeout
                 resp = requests.post(
                     f"{SITE_URL}/api/method/tenderlead.api.ingest_stage1_results",
                     headers=headers,
-                    data={"job_id": job_id, "docname": docname, "tenders": json.dumps(results)}
+                    data={"job_id": job_id, "docname": docname, "tenders": json.dumps(results)},
+                    timeout=60
                 )
                 print(f"[Agent] Stage 1 Ingestion Status: {resp.status_code}, Response: {resp.text}")
                 
@@ -135,6 +135,7 @@ def worker():
                     for tender_id, file_paths in files_map.items():
                         files_payload = {}
                         opened_files = []
+                        upload_success = False
                         try:
                             for idx, path in enumerate(file_paths):
                                 f = open(path, "rb")
@@ -145,22 +146,32 @@ def worker():
                                 f"{SITE_URL}/api/method/tenderlead.api.ingest_stage2_documents",
                                 headers=headers,
                                 data={"job_id": job_id, "tender_id": tender_id},
-                                files=files_payload
+                                files=files_payload,
+                                timeout=120
                             )
                             print(f"[Agent] Upload status for tender {tender_id}: {resp.status_code}")
+                            if resp.status_code == 200:
+                                upload_success = True
                         finally:
                             for f in opened_files:
                                 f.close()
-                            # Clean up temporary downloads
-                            cleanup_tender_documents(tender_id)
+                            # Clean up temporary downloads ONLY if upload was successful
+                            if upload_success:
+                                cleanup_tender_documents(tender_id)
+                            else:
+                                print(f"[Warning] Ingestion failed for {tender_id}. Local files preserved under uploads/{tender_id}")
                 
         except Exception as e:
             print(f"[Agent Error] Job {job_id} failed: {e}")
-            requests.post(
-                f"{SITE_URL}/api/method/tenderlead.api.report_job_failure",
-                headers=headers,
-                json={"job_id": job_id, "error_message": str(e)}
-            )
+            try:
+                requests.post(
+                    f"{SITE_URL}/api/method/tenderlead.api.report_job_failure",
+                    headers=headers,
+                    json={"job_id": job_id, "error_message": str(e)},
+                    timeout=15
+                )
+            except Exception as report_err:
+                print(f"[Agent Critical] Failed to report job failure to server: {report_err}")
         finally:
             job_queue.task_done()
 
@@ -205,8 +216,7 @@ if __name__ == "__main__":
         # Extract the sid cookie
         sid = response.cookies.get("sid")
         if not sid:
-            print("WARNING: Could not extract session cookie (sid). Attempting connection without it...")
-            sio_headers = headers
+            raise RuntimeError("Authentication failed: session cookie (sid) not found in response.")
         else:
             print("Authentication successful! Session cookie obtained.")
             sio_headers = {

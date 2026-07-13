@@ -205,6 +205,7 @@ def on_stage2(data):
 if __name__ == "__main__":
     # 1. Fetch a valid session cookie (sid) using API credentials
     print(f"Authenticating with {SITE_URL}...")
+    sid = None
     try:
         response = requests.post(
             f"{SITE_URL}/api/method/frappe.auth.get_logged_user",
@@ -212,21 +213,18 @@ if __name__ == "__main__":
             timeout=15
         )
         response.raise_for_status()
-        
-        # Extract the sid cookie
         sid = response.cookies.get("sid")
-        if not sid:
-            raise RuntimeError("Authentication failed: session cookie (sid) not found in response.")
-        else:
-            print("Authentication successful! Session cookie obtained.")
-            sio_headers = {
-                "Cookie": f"sid={sid};",
-                "Authorization": f"token {API_KEY}:{API_SECRET}"
-            }
-            
     except Exception as e:
-        print(f"Authentication request failed: {e}. Connecting with default headers...")
-        sio_headers = headers
+        print(f"Authentication HTTP request failed: {e}")
+
+    if not sid:
+        raise RuntimeError("Authentication failed: session cookie (sid) not found in response.")
+
+    print("Authentication successful! Session cookie obtained.")
+    sio_headers = {
+        "Cookie": f"sid={sid};",
+        "Authorization": f"token {API_KEY}:{API_SECRET}"
+    }
 
     # 2. Connect to Socket.IO with cookie credentials
     sio.connect(

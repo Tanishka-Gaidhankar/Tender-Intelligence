@@ -169,6 +169,7 @@ threading.Thread(target=worker, daemon=True).start()
 @sio.event
 def connect():
     print("Connected to Frappe Socket.IO server!")
+    sio.emit("doctype_subscribe", "Tender Primary Screening")
 
 @sio.on("stage1_trigger")
 def on_stage1(data):

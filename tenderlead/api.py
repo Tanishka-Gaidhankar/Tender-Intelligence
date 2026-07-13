@@ -29,7 +29,7 @@ def trigger_stage1_scan(docname):
 
 @frappe.whitelist()
 def ingest_stage1_results(job_id, docname, tenders):
-    """Ingests scraped tenders, populates the child table, and triggers Claude AI scoring."""
+    """Ingests scraped tenders, populates the child table, and updates stats (AI scoring skipped for now)."""
     job = frappe.get_doc("Scrape Job Log", job_id)
     job.status = "Running"
     job.save(ignore_permissions=True)
@@ -58,6 +58,11 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "status": "New"
                 })
                 lead_doc.insert(ignore_permissions=True)
+            else:
+                # Update existing global lead status to New so it is clean for screening
+                lead_doc = frappe.get_doc("Raw Tender Lead", t["tender_id"])
+                lead_doc.status = "New"
+                lead_doc.save(ignore_permissions=True)
             
             # 2. Add reference to the Tender Primary Screening child table
             parent_doc.append("raw_tender_leads", {
@@ -71,11 +76,10 @@ def ingest_stage1_results(job_id, docname, tenders):
             })
             
         parent_doc.save(ignore_permissions=True)
+        frappe.db.commit()
         
-        # 3. Call Claude AI stage 1 filter/scoring on new items & update stats
-        # (This executes your existing stage 1 AI scoring pipeline helper)
-        from tenderlead.api import run_ai_filtering_and_stats
-        run_ai_filtering_and_stats(parent_doc)
+        # 3. Recalculate statistics on parent screening doc
+        parent_doc.refresh_tenders()
         
         job.status = "Completed"
         job.finished_at = now_datetime()
@@ -100,7 +104,8 @@ def trigger_stage2_scan(docname):
         if lead_status in ["Good Match", "May be"]:
             tenders_to_scrape.append({
                 "tender_id": row.tender_id,
-                "link": row.link
+                "link": row.link,
+                "source": row.source
             })
             
     if not tenders_to_scrape:

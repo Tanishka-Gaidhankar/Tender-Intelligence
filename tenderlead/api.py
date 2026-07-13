@@ -15,7 +15,7 @@ def trigger_stage1_scan(docname):
         "started_at": now_datetime()
     }).insert(ignore_permissions=True)
     
-    # Publish Socket.IO trigger event to local agent
+    # Publish Socket.IO trigger event to the DocType room
     frappe.publish_realtime(
         event="stage1_trigger",
         message={
@@ -23,7 +23,8 @@ def trigger_stage1_scan(docname):
             "docname": docname,
             "source": doc.tender_source,
             "screening_date": doc.screening_date
-        }
+        },
+        doctype="Tender Primary Screening"
     )
     return {"status": "success", "job_id": job.name}
 
@@ -35,7 +36,12 @@ def ingest_stage1_results(job_id, docname, tenders):
     job.save(ignore_permissions=True)
     
     try:
-        tenders_list = json.loads(tenders)
+        # Type-safety: Handle both raw string JSON and pre-parsed python lists/dicts
+        if isinstance(tenders, str):
+            tenders_list = json.loads(tenders)
+        else:
+            tenders_list = tenders
+            
         parent_doc = frappe.get_doc("Tender Primary Screening", docname)
         
         # Clear existing entries in the child table to avoid duplicates on re-run
@@ -118,13 +124,15 @@ def trigger_stage2_scan(docname):
         "started_at": now_datetime()
     }).insert(ignore_permissions=True)
     
+    # Publish Socket.IO trigger event to the DocType room
     frappe.publish_realtime(
         event="stage2_trigger",
         message={
             "job_id": job.name,
             "docname": docname,
             "tenders": tenders_to_scrape
-        }
+        },
+        doctype="Tender Primary Screening"
     )
     return {"status": "success", "job_id": job.name}
 

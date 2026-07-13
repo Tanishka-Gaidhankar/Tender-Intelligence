@@ -16,7 +16,7 @@ API_KEY = "7b297c61a9c0294"
 API_SECRET = "47f108f27186fa4"
 headers = {"Authorization": f"token {API_KEY}:{API_SECRET}"}
 
-sio = socketio.Client()
+sio = socketio.Client(logger=True, engineio_logger=True)
 job_queue = queue.Queue()
 
 def run_stage1_listings(source, screening_date):
@@ -169,7 +169,6 @@ threading.Thread(target=worker, daemon=True).start()
 @sio.event
 def connect():
     print("Connected to Frappe Socket.IO server!")
-    sio.emit("doctype_subscribe", "Tender Primary Screening")
 
 @sio.on("stage1_trigger")
 def on_stage1(data):
@@ -193,6 +192,36 @@ def on_stage2(data):
     })
 
 if __name__ == "__main__":
-    sio.connect(SITE_URL, headers={"Authorization": f"token {API_KEY}:{API_SECRET}"}, transports=["websocket"])
+    # 1. Fetch a valid session cookie (sid) using API credentials
+    print(f"Authenticating with {SITE_URL}...")
+    try:
+        response = requests.post(
+            f"{SITE_URL}/api/method/frappe.auth.get_logged_user",
+            headers=headers,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        # Extract the sid cookie
+        sid = response.cookies.get("sid")
+        if not sid:
+            print("WARNING: Could not extract session cookie (sid). Attempting connection without it...")
+            sio_headers = headers
+        else:
+            print("Authentication successful! Session cookie obtained.")
+            sio_headers = {
+                "Cookie": f"sid={sid};",
+                "Authorization": f"token {API_KEY}:{API_SECRET}"
+            }
+            
+    except Exception as e:
+        print(f"Authentication request failed: {e}. Connecting with default headers...")
+        sio_headers = headers
+
+    # 2. Connect to Socket.IO with cookie credentials
+    sio.connect(
+        SITE_URL,
+        headers=sio_headers
+    )
     sio.wait()
 

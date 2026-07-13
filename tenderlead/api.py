@@ -4,102 +4,39 @@ import json
 
 @frappe.whitelist()
 def trigger_stage1_scan(docname):
-    """Triggers Stage 1 Playwright scraper by creating a Queued Scrape Job Log."""
+    """Triggers Stage 1 Playwright scraper for the given Tender Primary Screening doc."""
     doc = frappe.get_doc("Tender Primary Screening", docname)
     
-    # Store trigger parameters in JSON payload
-    payload_data = {
-        "docname": docname,
-        "source": doc.tender_source,
-        "screening_date": str(doc.screening_date) if doc.screening_date else None
-    }
-    
-    # Create the job log entry in Queued status
+    # Create a job log entry
     job = frappe.get_doc({
         "doctype": "Scrape Job Log",
         "job_type": "Stage 1",
         "status": "Queued",
-        "payload": json.dumps(payload_data)
+        "started_at": now_datetime()
     }).insert(ignore_permissions=True)
     
+    # Publish Socket.IO trigger event to the DocType room
+    frappe.publish_realtime(
+        event="stage1_trigger",
+        message={
+            "job_id": job.name,
+            "docname": docname,
+            "source": doc.tender_source,
+            "screening_date": str(doc.screening_date) if doc.screening_date else None
+        },
+        doctype="Tender Primary Screening"
+    )
     return {"status": "success", "job_id": job.name}
-
-@frappe.whitelist()
-def trigger_stage2_scan(docname):
-    """Triggers Stage 2 Playwright document downloader by creating a Queued Scrape Job Log."""
-    parent_doc = frappe.get_doc("Tender Primary Screening", docname)
-    
-    # Collect tender IDs that require document scraping
-    tenders_to_scrape = []
-    for row in parent_doc.raw_tender_leads:
-        lead_status = frappe.db.get_value("Raw Tender Lead", row.tender_id, "status")
-        if lead_status in ["Good Match", "May be"]:
-            tenders_to_scrape.append({
-                "tender_id": row.tender_id,
-                "link": row.link,
-                "source": row.source
-            })
-            
-    if not tenders_to_scrape:
-        frappe.throw("No approved/shortlisted tenders found for secondary screening.")
-        
-    # Store trigger parameters in JSON payload
-    payload_data = {
-        "docname": docname,
-        "tenders": tenders_to_scrape
-    }
-    
-    # Create the job log entry in Queued status
-    job = frappe.get_doc({
-        "doctype": "Scrape Job Log",
-        "job_type": "Stage 2",
-        "status": "Queued",
-        "payload": json.dumps(payload_data)
-    }).insert(ignore_permissions=True)
-    
-    return {"status": "success", "job_id": job.name}
-
-@frappe.whitelist()
-def claim_next_job():
-    """Atomically claims the next Queued job, marking it as Running."""
-    # Atomic select with row-level locking
-    jobs = frappe.db.sql("""
-        SELECT name FROM `tabScrape Job Log`
-        WHERE status = 'Queued'
-        ORDER BY creation ASC
-        LIMIT 1
-        FOR UPDATE
-    """, as_dict=True)
-    
-    if not jobs:
-        return None
-        
-    job_name = jobs[0].name
-    
-    # Mark it as Running atomically
-    frappe.db.set_value("Scrape Job Log", job_name, "status", "Running")
-    frappe.db.set_value("Scrape Job Log", job_name, "started_at", now_datetime())
-    frappe.db.commit()
-    
-    # Fetch job doc and parse payload
-    job_doc = frappe.get_doc("Scrape Job Log", job_name)
-    payload = json.loads(job_doc.payload) if job_doc.payload else {}
-    
-    return {
-        "job_id": job_doc.name,
-        "job_type": job_doc.job_type,
-        "docname": payload.get("docname"),
-        "payload": payload
-    }
 
 @frappe.whitelist()
 def ingest_stage1_results(job_id, docname, tenders):
-    """Ingests scraped tenders, populates the child table, and updates stats."""
+    """Ingests scraped tenders, populates the child table, and updates stats (AI scoring skipped for now)."""
     job = frappe.get_doc("Scrape Job Log", job_id)
     job.status = "Running"
     job.save(ignore_permissions=True)
     
     try:
+        # Type-safety: Handle both raw string JSON and pre-parsed python lists/dicts
         if isinstance(tenders, str):
             tenders_list = json.loads(tenders)
         else:
@@ -107,8 +44,8 @@ def ingest_stage1_results(job_id, docname, tenders):
             
         parent_doc = frappe.get_doc("Tender Primary Screening", docname)
         
-        # Clear existing entries in the child table to avoid duplicates on re-run
-        parent_doc.set("raw_tender_leads", [])
+        # Clear existing entries in the child table to avoid duplicates on re-run (field is raw_tender_leads_tbl)
+        parent_doc.set("raw_tender_leads_tbl", [])
         
         for t in tenders_list:
             # 1. Create or update the global Raw Tender Lead document
@@ -133,22 +70,27 @@ def ingest_stage1_results(job_id, docname, tenders):
                 lead_doc.status = "New"
                 lead_doc.save(ignore_permissions=True)
             
-            # 2. Add reference to the Tender Primary Screening child table
-            parent_doc.append("raw_tender_leads", {
+            # 2. Add reference to the Tender Primary Screening child table (Raw Tender Leads TBL)
+            parent_doc.append("raw_tender_leads_tbl", {
                 "tender_id": t["tender_id"],
-                "tender_title": t.get("title"),
-                "due_date": t.get("due_date"),
-                "authority": t.get("authority"),
-                "link": t.get("link"),
                 "source": t.get("source"),
-                "value": t.get("value")
+                "title": t.get("title"),
+                "authority": t.get("authority"),
+                "location": t.get("location"),
+                "value": t.get("value"),
+                "due_date": t.get("due_date"),
+                "status": "New",
+                "raw_tender_lead": lead_doc.name
             })
             
         parent_doc.save(ignore_permissions=True)
         frappe.db.commit()
         
-        # 3. Recalculate statistics on parent screening doc
-        parent_doc.refresh_tenders()
+        # 3. Recalculate statistics on parent screening doc (using fallback if method missing)
+        if hasattr(parent_doc, "refresh_tenders"):
+            parent_doc.refresh_tenders()
+        else:
+            calculate_statistics_direct(parent_doc)
         
         job.status = "Completed"
         job.finished_at = now_datetime()
@@ -159,6 +101,76 @@ def ingest_stage1_results(job_id, docname, tenders):
         frappe.log_error(frappe.get_traceback(), "Stage 1 Ingestion Error")
         report_job_failure(job_id, str(e))
         return {"status": "error", "message": str(e)}
+
+def calculate_statistics_direct(parent_doc):
+    """Fallback statistics calculator directly updating the parent doc fields."""
+    tenders = parent_doc.raw_tender_leads_tbl or []
+    
+    no_of_tender_screen = len(tenders)
+    no_of_match = 0
+    no_of_may_be = 0
+    no_of_not_match = 0
+    
+    for t in tenders:
+        status = t.status or "New"
+        if status == "Good Match":
+            no_of_match += 1
+        elif status in ["May be", "AI Processing"]:
+            no_of_may_be += 1
+        elif status in ["No Match", "Rules Rejected", "Rejected AI"]:
+            no_of_not_match += 1
+            
+    parent_doc.no_of_tender_screen = no_of_tender_screen
+    parent_doc.no_of_match = no_of_match
+    parent_doc.no_of_may_be = no_of_may_be
+    parent_doc.no_of_not_match = no_of_not_match
+    
+    if no_of_tender_screen > 0:
+        parent_doc.percent_matched = (no_of_match / no_of_tender_screen) * 100.0
+    else:
+        parent_doc.percent_matched = 0.0
+        
+    parent_doc.save(ignore_permissions=True)
+    frappe.db.commit()
+
+@frappe.whitelist()
+def trigger_stage2_scan(docname):
+    """Triggers Stage 2 Playwright document downloader for approved/unresolved tenders."""
+    parent_doc = frappe.get_doc("Tender Primary Screening", docname)
+    
+    # Collect tender IDs that require document scraping (e.g. status = "Good Match" or "May be")
+    tenders_to_scrape = []
+    for row in parent_doc.raw_tender_leads_tbl:
+        # Check global lead status to see if it was approved/shortlisted
+        lead_status = frappe.db.get_value("Raw Tender Lead", row.tender_id, "status")
+        if lead_status in ["Good Match", "May be"]:
+            tenders_to_scrape.append({
+                "tender_id": row.tender_id,
+                "link": row.link,
+                "source": row.source
+            })
+            
+    if not tenders_to_scrape:
+        frappe.throw("No approved/shortlisted tenders found for secondary screening.")
+        
+    job = frappe.get_doc({
+        "doctype": "Scrape Job Log",
+        "job_type": "Stage 2",
+        "status": "Queued",
+        "started_at": now_datetime()
+    }).insert(ignore_permissions=True)
+    
+    # Publish Socket.IO trigger event to the DocType room
+    frappe.publish_realtime(
+        event="stage2_trigger",
+        message={
+            "job_id": job.name,
+            "docname": docname,
+            "tenders": tenders_to_scrape
+        },
+        doctype="Tender Primary Screening"
+    )
+    return {"status": "success", "job_id": job.name}
 
 @frappe.whitelist()
 def report_job_failure(job_id, error_message):

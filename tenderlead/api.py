@@ -11,7 +11,7 @@ def trigger_stage1_scan(docname):
     payload_data = {
         "docname": docname,
         "source": doc.tender_source,
-        "screening_date": doc.screening_date
+        "screening_date": str(doc.screening_date) if doc.screening_date else None
     }
     
     # Create the job log entry in Queued status

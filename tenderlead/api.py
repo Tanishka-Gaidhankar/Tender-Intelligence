@@ -109,6 +109,10 @@ def ingest_stage1_results(job_id, docname, tenders):
         table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
         parent_doc.set(table_field, [])
         
+        child_doctype = parent_doc.meta.get_field(table_field).options
+        child_meta = frappe.get_meta(child_doctype)
+        fields_dict = {f.fieldname: f for f in child_meta.fields}
+        
         for t in tenders_list:
             # 1. Create or update the global Raw Tender Lead document
             if not frappe.db.exists("Raw Tender Lead", t["tender_id"]):
@@ -133,17 +137,33 @@ def ingest_stage1_results(job_id, docname, tenders):
                 lead_doc.save(ignore_permissions=True)
             
             # 2. Add reference to the Tender Primary Screening child table
-            parent_doc.append(table_field, {
-                "tender_id": t["tender_id"],
+            row_values = {
                 "source": t.get("source"),
                 "title": t.get("title"),
                 "authority": t.get("authority"),
                 "location": t.get("location"),
                 "value": t.get("value"),
                 "due_date": normalize_date_string(t.get("due_date")),
-                "status": "",
-                "raw_tender_lead": lead_doc.name
-            })
+                "status": ""
+            }
+            
+            # Set link references if they exist
+            for link_f in ["raw_tender_lead", "raw_tender_id"]:
+                if link_f in fields_dict:
+                    row_values[link_f] = lead_doc.name
+                    
+            # Set IDs (Link vs Data)
+            for id_f in ["tender_id", "tender_id_1"]:
+                if id_f in fields_dict:
+                    field_meta = fields_dict[id_f]
+                    is_link = (field_meta.fieldtype == "Link" or 
+                               (field_meta.fieldtype == "Data" and field_meta.options == "Raw Tender Lead"))
+                    if is_link:
+                        row_values[id_f] = lead_doc.name
+                    else:
+                        row_values[id_f] = t["tender_id"]
+                        
+            parent_doc.append(table_field, row_values)
             
         parent_doc.save(ignore_permissions=True)
         frappe.db.commit()

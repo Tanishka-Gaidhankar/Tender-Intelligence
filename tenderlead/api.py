@@ -105,13 +105,13 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "emd": t.get("emd"),
                     "due_date": t.get("due_date"),
                     "link": t.get("link"),
-                    "status": "New"
+                    "status": ""
                 })
                 lead_doc.insert(ignore_permissions=True)
             else:
-                # Update existing global lead status to New so it is clean for screening
+                # Update existing global lead status to empty string so it is clean for screening
                 lead_doc = frappe.get_doc("Raw Tender Lead", t["tender_id"])
-                lead_doc.status = "New"
+                lead_doc.status = ""
                 lead_doc.save(ignore_permissions=True)
             
             # 2. Add reference to the Tender Primary Screening child table
@@ -123,7 +123,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                 "location": t.get("location"),
                 "value": t.get("value"),
                 "due_date": t.get("due_date"),
-                "status": "New",
+                "status": "",
                 "raw_tender_lead": lead_doc.name
             })
             

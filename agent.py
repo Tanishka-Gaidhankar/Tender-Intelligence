@@ -110,35 +110,62 @@ def run_stage1_listings(source, screening_date=None, from_date=None, to_date=Non
         try:
             for d in dates_to_scrape:
                 if d:
-                    # Convert YYYY-MM-DD to DD/MM/YYYY
                     parts = d.split("-")
                     if len(parts) == 3:
-                        formatted_date = f"{parts[2]}/{parts[1]}/{parts[0]}"
-                        print(f"[Agent] Selecting mail date {formatted_date} on Tender247 dashboard...")
+                        target_year = int(parts[0])
+                        target_month_num = int(parts[1])
+                        target_day = int(parts[2])
+                        
+                        months_list = ["January", "February", "March", "April", "May", "June", 
+                                       "July", "August", "September", "October", "November", "December"]
+                        target_month_name = months_list[target_month_num - 1]
+                        target_caption = f"{target_month_name} {target_year}"
+                        
+                        print(f"[Agent] Selecting mail date {target_caption}, Day: {target_day} on Tender247 dashboard...")
                         try:
-                            picker_input = page.locator(".ant-picker-input input")
-                            picker_input.scroll_into_view_if_needed()
-                            
-                            clear_btn = page.locator(".ant-picker-clear")
-                            if clear_btn.is_visible():
-                                clear_btn.click()
-                                page.wait_for_timeout(500)
-                            else:
-                                picker_input.click()
-                                page.wait_for_timeout(500)
-                                page.keyboard.press("Control+A")
-                                page.keyboard.press("Backspace")
-                                page.wait_for_timeout(200)
+                            # 1. Open the popover by clicking the button
+                            btn = page.locator("text=Select Mail Date").locator("xpath=../button")
+                            if btn.count() > 0:
+                                btn.click()
+                                page.wait_for_timeout(1000)
                                 
-                            picker_input.fill(formatted_date)
-                            page.wait_for_timeout(500)
-                            picker_input.press("Enter")
-                            
-                            # Wait for dynamic React data load
-                            page.wait_for_timeout(4000)
-                            print(f"[Agent] Date {formatted_date} selected successfully.")
+                                # 2. Navigate months
+                                months_map = {m.lower(): idx + 1 for idx, m in enumerate(months_list)}
+                                for attempt in range(24):
+                                    current_caption_el = page.locator("#react-day-picker-1, .rdp-caption_start, .rdp-caption_end").first
+                                    full_text = current_caption_el.inner_text().strip()
+                                    current_caption = full_text.split("\n")[0].strip()
+                                    
+                                    if current_caption.lower() == target_caption.lower():
+                                        break
+                                        
+                                    curr_parts = current_caption.lower().split()
+                                    curr_month_num = months_map[curr_parts[0]]
+                                    curr_year = int(curr_parts[1])
+                                    
+                                    if curr_year > target_year or (curr_year == target_year and curr_month_num > target_month_num):
+                                        page.click("button[name='previous-month']")
+                                    else:
+                                        page.click("button[name='next-month']")
+                                    page.wait_for_timeout(500)
+                                    
+                                # 3. Click the day
+                                day_buttons = page.locator("button[name='day']:not(.day-outside)").all()
+                                day_clicked = False
+                                for d_btn in day_buttons:
+                                    if d_btn.inner_text().strip() == str(target_day):
+                                        d_btn.click()
+                                        day_clicked = True
+                                        break
+                                if day_clicked:
+                                    print(f"[Agent] Date {d} selected successfully.")
+                                    page.wait_for_timeout(4000) # Wait for table dynamic update
+                                else:
+                                    print(f"[Agent Warning] Day button {target_day} not found in month {current_caption}!")
+                            else:
+                                print("[Agent Warning] Select Mail Date button not found on page.")
                         except Exception as date_err:
-                            print(f"[Agent Warning] Failed to select date {formatted_date} via UI picker: {date_err}")
+                            print(f"[Agent Warning] Failed to select date {d} via UI picker: {date_err}")
 
                 print(f"[Agent] Scrolling to load all tenders on Tender247 dashboard (Date: {d})...")
                 previous_count = 0

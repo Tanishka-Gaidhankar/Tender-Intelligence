@@ -25,10 +25,27 @@ def trigger_stage1_scan(docname):
     """Triggers Stage 1 Playwright scraper for the given Tender Primary Screening doc."""
     doc = frappe.get_doc("Tender Primary Screening", docname)
     
+    from_date = None
+    to_date = None
+    
+    # Check for possible from_date / screening_from_date fieldnames
+    for fieldname in ["from_date", "screening_from_date", "date_from"]:
+        if hasattr(doc, fieldname) and getattr(doc, fieldname):
+            from_date = str(getattr(doc, fieldname))
+            break
+            
+    # Check for possible to_date / screening_to_date fieldnames
+    for fieldname in ["to_date", "screening_to_date", "date_to"]:
+        if hasattr(doc, fieldname) and getattr(doc, fieldname):
+            to_date = str(getattr(doc, fieldname))
+            break
+            
     payload_data = {
         "docname": docname,
         "source": doc.tender_source,
-        "screening_date": str(doc.screening_date) if doc.screening_date else None
+        "screening_date": str(doc.screening_date) if doc.screening_date else None,
+        "from_date": from_date,
+        "to_date": to_date
     }
     
     # Create a job log entry
@@ -47,7 +64,9 @@ def trigger_stage1_scan(docname):
             "job_id": job.name,
             "docname": docname,
             "source": doc.tender_source,
-            "screening_date": str(doc.screening_date) if doc.screening_date else None
+            "screening_date": str(doc.screening_date) if doc.screening_date else None,
+            "from_date": from_date,
+            "to_date": to_date
         },
         doctype="Tender Primary Screening"
     )

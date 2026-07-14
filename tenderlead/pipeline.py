@@ -94,16 +94,18 @@ def load_settings() -> dict:
     return {}
 
 
-def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None, ai_rationale: str = None, created_at: str = None):
-    """Inserts or updates a record in raw_tender_feed."""
+def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None, ai_rationale: str = None, created_at: str = None) -> bool:
+    """Inserts or updates a record in raw_tender_feed. Returns True if new, False if already exists."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
+    is_new = True
     # If the tender is already present in raw_tender_feed and has been processed,
     # do NOT reset its status back to "new" on subsequent runs.
     cursor.execute("SELECT status FROM raw_tender_feed WHERE tender_id = ?", (tender["tender_id"],))
     row = cursor.fetchone()
     if row is not None:
+        is_new = False
         existing_status = row[0]
         if status == "new" and existing_status not in (None, "new"):
             status = existing_status
@@ -136,9 +138,17 @@ def save_raw_feed(tender: dict, source: str, status: str, ai_score: float = None
     ))
     conn.commit()
     conn.close()
+    return is_new
 
 
-def save_tender_lead(tender: dict, source: str, score_results: dict, source_link: str):
+def save_tender_lead(
+    tender: dict,
+    source: str,
+    score_results: dict,
+    source_link: str,
+    stage_b_qualification: str = None,
+    stage_b_bid_documents: list[str] = None
+):
     """Inserts or updates a record in tender_leads."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -156,12 +166,23 @@ def save_tender_lead(tender: dict, source: str, score_results: dict, source_link
     ]
     ai_rationale_full = "\n".join(rationales)
 
+    # Ensure stage_b columns are initialized
+    from .stage_b.pipeline_stage_b import _init_stage_b_columns
+    _init_stage_b_columns()
+
+    db_qual = stage_b_qualification
+    db_docs = json.dumps(stage_b_bid_documents or [], ensure_ascii=False) if stage_b_bid_documents is not None else None
+
     cursor.execute("""
-        INSERT INTO tender_leads (tender_id, source, title, authority, location, estimated_value, emd, due_date, eligibility, scope_of_work, ai_score, ai_rationale, source_link, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tender_leads (
+            tender_id, source, title, authority, location, estimated_value, emd, due_date, eligibility, scope_of_work, 
+            ai_score, ai_rationale, source_link, created_at, stage_b_qualification, stage_b_bid_documents
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(tender_id) DO UPDATE SET
             ai_score=excluded.ai_score,
-            ai_rationale=excluded.ai_rationale
+            ai_rationale=excluded.ai_rationale,
+            stage_b_qualification=COALESCE(tender_leads.stage_b_qualification, excluded.stage_b_qualification),
+            stage_b_bid_documents=COALESCE(tender_leads.stage_b_bid_documents, excluded.stage_b_bid_documents)
     """, (
         tender["tender_id"],
         source,
@@ -176,7 +197,9 @@ def save_tender_lead(tender: dict, source: str, score_results: dict, source_link
         score_results["overall_score"],
         ai_rationale_full,
         source_link,
-        datetime.now().isoformat()
+        datetime.now().isoformat(),
+        db_qual,
+        db_docs
     ))
     conn.commit()
     conn.close()
@@ -293,9 +316,12 @@ def intake_tender247_batch(batch: dict) -> list[dict]:
 
         for idx, tender in enumerate(listings):
             arrival_date = batch["received_at"].strftime("%Y-%m-%d") if "received_at" in batch else "N/A"
-            print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
             created_at_val = batch["received_at"].isoformat() if "received_at" in batch else None
-            save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
+            is_new = save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
+            if is_new:
+                print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
+            else:
+                print(f"  [{idx+1}/{len(listings)}] ID: {tender['tender_id']} - Already exists in database (skipped).")
             
     finally:
         browser.close()
@@ -373,14 +399,17 @@ def intake_tenderdetail_direct(target_date=None) -> list[dict]:
         created_at_val = (datetime.combine(target_date, datetime.min.time()) + timedelta(hours=12)).isoformat() if target_date else datetime.now().isoformat()
         
         for idx, tender in enumerate(listings):
-            print(
-                f"  [{idx+1}/{len(listings)}] Source: TenderDetail | ID: {tender['tender_id']} | "
-                f"Title: {tender['title'][:60]}... | Link: {tender['view_tender_url']} | "
-                f"Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | "
-                f"Value: {tender.get('tender_value') or 'N/A'} | "
-                f"Org: {tender.get('authority')} | State: {tender.get('location')}"
-            )
-            save_raw_feed(tender, "TenderDetail", "new", created_at=created_at_val)
+            is_new = save_raw_feed(tender, "TenderDetail", "new", created_at=created_at_val)
+            if is_new:
+                print(
+                    f"  [{idx+1}/{len(listings)}] Source: TenderDetail | ID: {tender['tender_id']} | "
+                    f"Title: {tender['title'][:60]}... | Link: {tender['view_tender_url']} | "
+                    f"Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | "
+                    f"Value: {tender.get('tender_value') or 'N/A'} | "
+                    f"Org: {tender.get('authority')} | State: {tender.get('location')}"
+                )
+            else:
+                print(f"  [{idx+1}/{len(listings)}] ID: {tender['tender_id']} - Already exists in database (skipped).")
 
     finally:
         browser.close()
@@ -423,8 +452,11 @@ def intake_tender247_direct(target_date=None) -> list[dict]:
         created_at_val = (datetime.combine(target_date, datetime.min.time()) + timedelta(hours=12)).isoformat() if target_date else datetime.now().isoformat()
         
         for idx, tender in enumerate(listings):
-            print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
-            save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
+            is_new = save_raw_feed(tender, "Tender247", "new", created_at=created_at_val)
+            if is_new:
+                print(f"  [{idx+1}/{len(listings)}] Source: Tender247 | ID: {tender['tender_id']} | Title: {tender['title'][:60]}... | Link: {tender['ai_summary_url']} | Arrival: {arrival_date} | Due Date: {tender.get('due_date')} | Bid Value: {tender.get('bid_value') or 'N/A'} | Org: {tender.get('authority')} | State: {tender.get('location')}")
+            else:
+                print(f"  [{idx+1}/{len(listings)}] ID: {tender['tender_id']} - Already exists in database (skipped).")
             
     finally:
         browser.close()
@@ -621,30 +653,23 @@ def run_stage2():
             # 4. Fetch detail details
             save_raw_feed(tender, source, "unsure")
             
-            if source == "TenderDetail":
-                print("    Fetching detail page...")
-                detail = fetch_tenderdetail_detail(link)
-                if detail:
-                    tender.update(detail)
-                else:
-                    print("    Failed to fetch detail page. Skipping Stage 2.")
-                    save_raw_feed(tender, source, "unsure")
-                    continue
-            else:
-                if link:
-                    print("    Fetching AI Summary details page...")
+            eligibility_criteria = None
+            documents_checklist = []
+            
+            if source == "Tender247" and page:
+                try:
+                    print(f"    Fetching AI Summary / Eligibility block directly from Tender247 details page: {link}...")
                     summary_text = fetch_tender247_detail_summary(page, link)
                     if summary_text:
-                        tender["eligibility_criteria"] = summary_text
-                        tender["scope_of_work"] = title  # Fallback to title as scope
-                    else:
-                        print("    Failed to fetch AI summary. Skipping Stage 2.")
-                        save_raw_feed(tender, source, "unsure")
-                        continue
-                else:
-                    print("    No AI Summary URL found. Skipping Stage 2.")
-                    save_raw_feed(tender, source, "no_match", ai_rationale="No AI Summary link available.")
-                    continue
+                        from .stage_b.pipeline_stage_b import parse_ec_and_dc_from_ai_summary
+                        eligibility_criteria, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
+                        print(f"    Successfully pre-extracted eligibility ({len(eligibility_criteria)} chars) and documents checklist ({len(documents_checklist)} items).")
+                except Exception as e:
+                    print(f"    Warning: failed to extract Tender247 AI Summary during intake: {e}")
+
+            # Keep these for score_tender context
+            tender["eligibility_criteria"] = eligibility_criteria
+            tender["scope_of_work"] = None
                     
             # 5. Stage 2 Scoring
             score_results = score_tender(tender, settings)
@@ -654,7 +679,7 @@ def run_stage2():
             if overall_score >= threshold:
                 print(f"    ===> Promoted to Tender Lead! Score {overall_score} >= {threshold}")
                 save_raw_feed(tender, source, "good_match", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))
-                save_tender_lead(tender, source, score_results, link)
+                save_tender_lead(tender, source, score_results, link, stage_b_qualification=eligibility_criteria, stage_b_bid_documents=documents_checklist)
             else:
                 print(f"    No Match at AI scoring: score {overall_score} < {threshold}")
                 save_raw_feed(tender, source, "no_match", ai_score=overall_score, ai_rationale=score_results.get("scope_match_rationale"))

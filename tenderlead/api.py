@@ -7,11 +7,18 @@ def trigger_stage1_scan(docname):
     """Triggers Stage 1 Playwright scraper for the given Tender Primary Screening doc."""
     doc = frappe.get_doc("Tender Primary Screening", docname)
     
+    payload_data = {
+        "docname": docname,
+        "source": doc.tender_source,
+        "screening_date": str(doc.screening_date) if doc.screening_date else None
+    }
+    
     # Create a job log entry
     job = frappe.get_doc({
         "doctype": "Scrape Job Log",
         "job_type": "Stage 1",
         "status": "Queued",
+        "payload": json.dumps(payload_data),
         "started_at": now_datetime()
     }).insert(ignore_permissions=True)
     
@@ -27,6 +34,42 @@ def trigger_stage1_scan(docname):
         doctype="Tender Primary Screening"
     )
     return {"status": "success", "job_id": job.name}
+
+@frappe.whitelist()
+def claim_next_job():
+    """Claims the next queued scrape job and returns its details."""
+    jobs = frappe.get_all(
+        "Scrape Job Log",
+        filters={"status": "Queued"},
+        fields=["name"],
+        order_by="creation asc",
+        limit=1
+    )
+    
+    if not jobs:
+        return None
+        
+    job = frappe.get_doc("Scrape Job Log", jobs[0].name)
+    job.status = "Running"
+    job.save(ignore_permissions=True)
+    frappe.db.commit()
+    
+    payload = {}
+    if job.payload:
+        try:
+            payload = json.loads(job.payload)
+        except Exception:
+            pass
+            
+    docname = payload.get("docname")
+    
+    return {
+        "job_id": job.name,
+        "job_type": job.job_type,
+        "docname": docname,
+        "payload": payload
+    }
+
 
 @frappe.whitelist()
 def ingest_stage1_results(job_id, docname, tenders):
@@ -153,10 +196,16 @@ def trigger_stage2_scan(docname):
     if not tenders_to_scrape:
         frappe.throw("No approved/shortlisted tenders found for secondary screening.")
         
+    payload_data = {
+        "docname": docname,
+        "tenders": tenders_to_scrape
+    }
+    
     job = frappe.get_doc({
         "doctype": "Scrape Job Log",
         "job_type": "Stage 2",
         "status": "Queued",
+        "payload": json.dumps(payload_data),
         "started_at": now_datetime()
     }).insert(ignore_permissions=True)
     

@@ -87,8 +87,9 @@ def ingest_stage1_results(job_id, docname, tenders):
             
         parent_doc = frappe.get_doc("Tender Primary Screening", docname)
         
-        # Clear existing entries in the child table to avoid duplicates on re-run (field is raw_tender_leads_tbl)
-        parent_doc.set("raw_tender_leads_tbl", [])
+        # Clear existing entries in the child table to avoid duplicates on re-run
+        table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
+        parent_doc.set(table_field, [])
         
         for t in tenders_list:
             # 1. Create or update the global Raw Tender Lead document
@@ -113,8 +114,8 @@ def ingest_stage1_results(job_id, docname, tenders):
                 lead_doc.status = "New"
                 lead_doc.save(ignore_permissions=True)
             
-            # 2. Add reference to the Tender Primary Screening child table (Raw Tender Leads TBL)
-            parent_doc.append("raw_tender_leads_tbl", {
+            # 2. Add reference to the Tender Primary Screening child table
+            parent_doc.append(table_field, {
                 "tender_id": t["tender_id"],
                 "source": t.get("source"),
                 "title": t.get("title"),
@@ -147,7 +148,8 @@ def ingest_stage1_results(job_id, docname, tenders):
 
 def calculate_statistics_direct(parent_doc):
     """Fallback statistics calculator directly updating the parent doc fields."""
-    tenders = parent_doc.raw_tender_leads_tbl or []
+    table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
+    tenders = getattr(parent_doc, table_field, []) or []
     
     no_of_tender_screen = len(tenders)
     no_of_match = 0
@@ -163,16 +165,26 @@ def calculate_statistics_direct(parent_doc):
         elif status in ["No Match", "Rules Rejected", "Rejected AI"]:
             no_of_not_match += 1
             
-    parent_doc.no_of_tender_screen = no_of_tender_screen
-    parent_doc.no_of_match = no_of_match
-    parent_doc.no_of_may_be = no_of_may_be
-    parent_doc.no_of_not_match = no_of_not_match
-    
-    if no_of_tender_screen > 0:
-        parent_doc.percent_matched = (no_of_match / no_of_tender_screen) * 100.0
+    # Set fields dynamically depending on what exists on the server/doc
+    if hasattr(parent_doc, "tender_screen"):
+        parent_doc.tender_screen = no_of_tender_screen
+        parent_doc.match = no_of_match
+        parent_doc.may_be = no_of_may_be
+        parent_doc.no_of_not_match = no_of_not_match
+        if no_of_tender_screen > 0:
+            parent_doc.matched = (no_of_match / no_of_tender_screen) * 100.0
+        else:
+            parent_doc.matched = 0.0
     else:
-        parent_doc.percent_matched = 0.0
-        
+        parent_doc.no_of_tender_screen = no_of_tender_screen
+        parent_doc.no_of_match = no_of_match
+        parent_doc.no_of_may_be = no_of_may_be
+        parent_doc.no_of_not_match = no_of_not_match
+        if no_of_tender_screen > 0:
+            parent_doc.percent_matched = (no_of_match / no_of_tender_screen) * 100.0
+        else:
+            parent_doc.percent_matched = 0.0
+            
     parent_doc.save(ignore_permissions=True)
     frappe.db.commit()
 
@@ -183,7 +195,8 @@ def trigger_stage2_scan(docname):
     
     # Collect tender IDs that require document scraping (e.g. status = "Good Match" or "May be")
     tenders_to_scrape = []
-    for row in parent_doc.raw_tender_leads_tbl:
+    table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
+    for row in getattr(parent_doc, table_field, []):
         # Check global lead status to see if it was approved/shortlisted
         lead_status = frappe.db.get_value("Raw Tender Lead", row.tender_id, "status")
         if lead_status in ["Good Match", "May be"]:

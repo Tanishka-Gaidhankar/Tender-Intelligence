@@ -17,14 +17,15 @@ headers = {"Authorization": f"token {API_KEY}:{API_SECRET}"}
 def run_stage1_listings(source):
     """Runs the Playwright scraper to get listing data."""
     results = []
-    if source == "TenderDetail":
+    source_clean = "Tender Detail" if "detail" in source.lower() else "Tender247"
+    if source_clean == "Tender Detail":
         page, browser, playwright_ctx = get_tenderdetail_page(headless=True)
         try:
             results = scrape_all_query_tenders(page)
         finally:
             browser.close()
             playwright_ctx.stop()
-    elif source == "Tender247":
+    elif source_clean == "Tender247":
         page, browser, playwright_ctx = get_tender247_page(headless=True)
         try:
             # Scroll to load all tenders
@@ -48,7 +49,7 @@ def run_stage1_listings(source):
     for r in results:
         normalized.append({
             "tender_id": r.get("tender_id"),
-            "source": source,
+            "source": source_clean,
             "title": r.get("title"),
             "authority": r.get("authority"),
             "location": r.get("location"),
@@ -64,7 +65,8 @@ def run_stage2_docs(tenders, source):
     downloaded_files_map = {}
     if not tenders:
         return downloaded_files_map
-    if source == "TenderDetail":
+    source_clean = "Tender Detail" if "detail" in source.lower() else "Tender247"
+    if source_clean == "Tender Detail":
         page, browser, playwright_ctx = get_tenderdetail_page(headless=True)
     else:
         page, browser, playwright_ctx = get_tender247_page(headless=True)
@@ -72,12 +74,12 @@ def run_stage2_docs(tenders, source):
         for t in tenders:
             tender_id = t["tender_id"]
             link = t["link"]
-            if source == "TenderDetail":
+            if source_clean == "Tender Detail":
                 doc_links = collect_tenderdetail_document_urls(page, link)
             else:
                 doc_links = collect_tender247_document_urls(page, link)
             if doc_links:
-                dl_results = download_tender_documents(tender_id, doc_links, source)
+                dl_results = download_tender_documents(tender_id, doc_links, source_clean)
                 paths = [r["local_path"] for r in dl_results if r.get("local_path") and os.path.exists(r["local_path"])]
                 downloaded_files_map[tender_id] = paths
     finally:

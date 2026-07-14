@@ -1,6 +1,24 @@
 import frappe
 from frappe.utils import now_datetime
 import json
+import re
+
+def normalize_date_string(date_str):
+    if not date_str:
+        return None
+    date_str = str(date_str).strip()
+    parts = re.split(r'[-/]', date_str)
+    if len(parts) == 3:
+        if len(parts[2]) == 4 and len(parts[0]) <= 2:
+            return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        elif len(parts[0]) == 4:
+            return f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+    try:
+        from frappe.utils import getdate
+        return str(getdate(date_str))
+    except Exception:
+        return None
+
 
 @frappe.whitelist()
 def trigger_stage1_scan(docname):
@@ -103,7 +121,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "location": t.get("location"),
                     "value": t.get("value"),
                     "emd": t.get("emd"),
-                    "due_date": t.get("due_date"),
+                    "due_date": normalize_date_string(t.get("due_date")),
                     "link": t.get("link"),
                     "status": ""
                 })
@@ -122,7 +140,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                 "authority": t.get("authority"),
                 "location": t.get("location"),
                 "value": t.get("value"),
-                "due_date": t.get("due_date"),
+                "due_date": normalize_date_string(t.get("due_date")),
                 "status": "",
                 "raw_tender_lead": lead_doc.name
             })

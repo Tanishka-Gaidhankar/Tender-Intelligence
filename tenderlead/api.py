@@ -286,31 +286,50 @@ def calculate_statistics_direct(parent_doc):
     frappe.db.commit()
 
 @frappe.whitelist()
-def trigger_stage2_scan(docname):
-    """Triggers Stage 2 Playwright document downloader for approved/unresolved tenders."""
-    parent_doc = frappe.get_doc("Tender Primary Screening", docname)
-    
-    # Collect tender IDs that require document scraping (e.g. status = "Good Match" or "May be")
+def trigger_stage2_scan(docname=None, tender_id=None):
+    """
+    Triggers Stage 2 Playwright document intelligence scanner.
+    Can be invoked for a single tender (via child table row) or for all approved tenders in a primary screening doc.
+    """
     tenders_to_scrape = []
-    table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
-    for row in getattr(parent_doc, table_field, []):
-        # Check global lead status to see if it was approved/shortlisted
-        lead_status = frappe.db.get_value("Raw Tender Lead", row.tender_id, "status")
-        if lead_status in ["Good Match", "May be"]:
-            tenders_to_scrape.append({
-                "tender_id": row.tender_id,
-                "link": row.link,
-                "source": row.source
-            })
-            
+
+    if tender_id:
+        # Single tender trigger from child table row
+        lead_doc = frappe.get_doc("Raw Tender Lead", tender_id) if frappe.db.exists("Raw Tender Lead", tender_id) else None
+        link_val = lead_doc.link if lead_doc else None
+        source_val = lead_doc.source if lead_doc else "Tender247"
+        title_val = lead_doc.title if lead_doc else tender_id
+
+        tenders_to_scrape.append({
+            "tender_id": tender_id,
+            "link": link_val,
+            "source": source_val,
+            "title": title_val
+        })
+    elif docname:
+        # Batch trigger from parent screening doc
+        parent_doc = frappe.get_doc("Tender Primary Screening", docname)
+        table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
+        for row in getattr(parent_doc, table_field, []):
+            t_id = getattr(row, "tender_id", None) or getattr(row, "tender_id_1", None)
+            lead_status = frappe.db.get_value("Raw Tender Lead", t_id, "status") if t_id else getattr(row, "status", None)
+            if lead_status in ["Good Match", "May be", "rules_passed", "lead_created"]:
+                tenders_to_scrape.append({
+                    "tender_id": t_id,
+                    "link": getattr(row, "link", None) or getattr(row, "url", None),
+                    "source": getattr(row, "source", "Tender247"),
+                    "title": getattr(row, "title", t_id)
+                })
+
     if not tenders_to_scrape:
-        frappe.throw("No approved/shortlisted tenders found for secondary screening.")
-        
+        frappe.throw("No valid tender selected or found for secondary screening.")
+
     payload_data = {
         "docname": docname,
+        "tender_id": tender_id,
         "tenders": tenders_to_scrape
     }
-    
+
     job = frappe.get_doc({
         "doctype": "Scrape Job Log",
         "job_type": "Stage 2",
@@ -318,17 +337,18 @@ def trigger_stage2_scan(docname):
         "payload": json.dumps(payload_data),
         "started_at": now_datetime()
     }).insert(ignore_permissions=True)
-    
-    # Publish Socket.IO trigger event to the DocType room
+
     frappe.publish_realtime(
         event="stage2_trigger",
         message={
             "job_id": job.name,
             "docname": docname,
+            "tender_id": tender_id,
             "tenders": tenders_to_scrape
         },
         doctype="Tender Primary Screening"
     )
+
     return {"status": "success", "job_id": job.name}
 
 @frappe.whitelist()

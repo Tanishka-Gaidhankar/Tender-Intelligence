@@ -201,31 +201,48 @@ def run_stage1_listings(source, screening_date=None, from_date=None, to_date=Non
     return all_results
 
 def run_stage2_docs(tenders, source):
-    """Downloads files for the given tenders list."""
-    downloaded_files_map = {}
+    """Downloads files and runs Stage 2 Secondary Screening AI intelligence extraction."""
+    results_map = {}
     if not tenders:
-        return downloaded_files_map
-    source_clean = "Tender Detail" if "detail" in source.lower() else "Tender247"
+        return results_map
+    source_clean = "Tender Detail" if "detail" in str(source).lower() else "Tender247"
     if source_clean == "Tender Detail":
         page, browser, playwright_ctx = get_tenderdetail_page(headless=True)
     else:
         page, browser, playwright_ctx = get_tender247_page(headless=True)
     try:
+        from tenderlead.stage_b.document_classifier import classify_all_documents
+        from tenderlead.stage_b.document_extractor import extract_tender_intelligence
+
         for t in tenders:
             tender_id = t["tender_id"]
-            link = t["link"]
+            link = t.get("link")
+            title = t.get("title") or tender_id
+
             if source_clean == "Tender Detail":
                 doc_links = collect_tenderdetail_document_urls(page, link)
             else:
                 doc_links = collect_tender247_document_urls(page, link)
+
+            dl_results = []
             if doc_links:
                 dl_results = download_tender_documents(tender_id, doc_links, source_clean)
-                paths = [r["local_path"] for r in dl_results if r.get("local_path") and os.path.exists(r["local_path"])]
-                downloaded_files_map[tender_id] = paths
+
+            classified = classify_all_documents(dl_results)
+            intel = extract_tender_intelligence(classified, tender_title=title, tender_id=tender_id)
+
+            paths = [r["local_path"] for r in dl_results if r.get("local_path") and os.path.exists(r["local_path"])]
+
+            results_map[tender_id] = {
+                "file_paths": paths,
+                "intelligence": intel,
+                "title": title,
+                "source": source_clean
+            }
     finally:
         browser.close()
         playwright_ctx.stop()
-    return downloaded_files_map
+    return results_map
 
 def process_job(job_data):
     """Executes the claimed job."""
@@ -252,9 +269,15 @@ def process_job(job_data):
             tenders = payload.get("tenders", [])
             if tenders:
                 source = tenders[0].get("source", "Tender247")
-                print(f"[Agent] Processing Stage 2 for {len(tenders)} tenders from {source}...")
-                files_map = run_stage2_docs(tenders, source)
-                for tender_id, file_paths in files_map.items():
+                print(f"[Agent] Processing Stage 2 Secondary Screening for {len(tenders)} tenders from {source}...")
+                results_map = run_stage2_docs(tenders, source)
+
+                for tender_id, item in results_map.items():
+                    file_paths = item.get("file_paths", [])
+                    extracted_intel = item.get("intelligence", {})
+                    extracted_intel["title"] = item.get("title")
+                    extracted_intel["source"] = item.get("source")
+
                     files_payload = {}
                     opened_files = []
                     upload_success = False
@@ -266,11 +289,16 @@ def process_job(job_data):
                         resp = requests.post(
                             f"{SITE_URL}/api/method/tenderlead.api.ingest_stage2_documents",
                             headers=headers,
-                            data={"job_id": job_id, "tender_id": tender_id},
-                            files=files_payload,
+                            data={
+                                "job_id": job_id,
+                                "tender_id": tender_id,
+                                "docname": docname,
+                                "results_json": json.dumps(extracted_intel)
+                            },
+                            files=files_payload if files_payload else None,
                             timeout=120
                         )
-                        print(f"[Agent] Upload status for tender {tender_id}: {resp.status_code}")
+                        print(f"[Agent] Secondary Screening Ingestion for {tender_id}: Status {resp.status_code}, Response: {resp.text}")
                         if resp.status_code == 200:
                             upload_success = True
                     finally:
@@ -279,7 +307,7 @@ def process_job(job_data):
                         if upload_success:
                             cleanup_tender_documents(tender_id)
                         else:
-                            print(f"[Warning] Ingestion failed for {tender_id}. Local files preserved.")
+                            print(f"[Warning] Ingestion failed for {tender_id}.")
     except Exception as e:
         print(f"[Agent Error] Job {job_id} failed: {e}")
         try:

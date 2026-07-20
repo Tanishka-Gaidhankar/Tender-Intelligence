@@ -342,33 +342,113 @@ def report_job_failure(job_id, error_message):
     return {"status": "success"}
 
 @frappe.whitelist()
-def ingest_stage2_documents(job_id, tender_id):
-    """Whitelisted API for direct file uploads."""
-    job = frappe.get_doc("Scrape Job Log", job_id)
-    job.status = "Running"
-    job.save(ignore_permissions=True)
+def ingest_stage2_documents(job_id=None, tender_id=None, docname=None, results_json=None):
+    """
+    Whitelisted API for ingesting Stage 2 document files and extracted intelligence
+    (Scope of Work, Qualification Criteria, Document Checklist) into Tender Secondary Screening.
+    """
+    job = frappe.get_doc("Scrape Job Log", job_id) if job_id and frappe.db.exists("Scrape Job Log", job_id) else None
+    if job:
+        job.status = "Running"
+        job.save(ignore_permissions=True)
     
     try:
-        if not frappe.request.files:
-            raise ValueError("No files attached to request")
-            
-        for file_key in frappe.request.files:
-            file_data = frappe.request.files[file_key]
-            # Save file attachment to ERPNext attached to 'Raw Tender Lead'
-            saved_file = frappe.get_doc({
-                "doctype": "File",
-                "file_name": file_data.filename,
-                "attached_to_doctype": "Raw Tender Lead",
-                "attached_to_name": tender_id,
-                "content": file_data.stream.read(),
-                "is_private": 0
-            })
-            saved_file.save(ignore_permissions=True)
-            
-        job.status = "Completed"
-        job.finished_at = now_datetime()
-        job.save(ignore_permissions=True)
-        return {"status": "success"}
+        results = {}
+        if results_json:
+            if isinstance(results_json, str):
+                try:
+                    results = json.loads(results_json)
+                except Exception:
+                    results = {}
+            elif isinstance(results_json, dict):
+                results = results_json
+
+        t_id = tender_id or results.get("tender_id")
+        lead_doc = frappe.get_doc("Raw Tender Lead", t_id) if t_id and frappe.db.exists("Raw Tender Lead", t_id) else None
+        title_val = (lead_doc.title if lead_doc else None) or results.get("title") or t_id or "Unknown Tender"
+        source_val = (lead_doc.source if lead_doc else None) or results.get("source") or "Tender247"
+
+        scope_val = results.get("scope_of_work", "")
+        qualification_val = results.get("qualification_criteria", "")
+        checklist_raw = results.get("documents_required_for_bid") or results.get("document_checklist") or []
+
+        if isinstance(checklist_raw, list):
+            checklist_str = "\n".join([f"• {item}" if not str(item).startswith("•") else str(item) for item in checklist_raw])
+        else:
+            checklist_str = str(checklist_raw)
+
+        # Create or update Tender Secondary Screening document in ERPNext
+        sec_doc = None
+        if t_id and frappe.db.exists("Tender Secondary Screening", {"tender_id": t_id}):
+            sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": t_id})
+        elif frappe.db.exists("Tender Secondary Screening", {"tender_title": title_val}):
+            sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_title": title_val})
+        else:
+            sec_doc = frappe.new_doc("Tender Secondary Screening")
+
+        meta = frappe.get_meta("Tender Secondary Screening")
+        fields = {f.fieldname for f in meta.fields}
+
+        field_mappings = [
+            ("tender_id", t_id),
+            ("tender_id_1", t_id),
+            ("source", source_val),
+            ("tender_title", title_val),
+            ("title", title_val),
+            ("scope_of_work", scope_val),
+            ("qualification_criteria", qualification_val),
+            ("eligibility_criteria", qualification_val),
+            ("document_checklist", checklist_str),
+            ("checklist", checklist_str),
+            ("documents_required_for_bid", checklist_str)
+        ]
+        for fieldname, value in field_mappings:
+            if fieldname in fields and value:
+                sec_doc.set(fieldname, value)
+
+        sec_doc.save(ignore_permissions=True)
+
+        # Save uploaded PDF files to Tender Secondary Screening + Raw Tender Lead
+        if frappe.request and frappe.request.files:
+            for file_key in frappe.request.files:
+                file_data = frappe.request.files[file_key]
+                file_bytes = file_data.stream.read()
+
+                saved_sec_file = frappe.get_doc({
+                    "doctype": "File",
+                    "file_name": file_data.filename,
+                    "attached_to_doctype": "Tender Secondary Screening",
+                    "attached_to_name": sec_doc.name,
+                    "content": file_bytes,
+                    "is_private": 0
+                })
+                saved_sec_file.save(ignore_permissions=True)
+
+                if "document_extracted" in fields and hasattr(saved_sec_file, "file_url"):
+                    sec_doc.set("document_extracted", saved_sec_file.file_url)
+                    sec_doc.save(ignore_permissions=True)
+
+                if lead_doc:
+                    frappe.get_doc({
+                        "doctype": "File",
+                        "file_name": file_data.filename,
+                        "attached_to_doctype": "Raw Tender Lead",
+                        "attached_to_name": lead_doc.name,
+                        "content": file_bytes,
+                        "is_private": 0
+                    }).save(ignore_permissions=True)
+
+        frappe.db.commit()
+
+        if job:
+            job.status = "Completed"
+            job.finished_at = now_datetime()
+            job.save(ignore_permissions=True)
+
+        return {"status": "success", "sec_doc": sec_doc.name}
+
     except Exception as e:
-        report_job_failure(job_id, str(e))
+        frappe.log_error(frappe.get_traceback(), "Ingest Stage 2 Documents Error")
+        if job:
+            report_job_failure(job.name, str(e))
         return {"status": "error", "message": str(e)}

@@ -61,10 +61,7 @@ def load_llm_config() -> dict:
         env_api_key = os.getenv("GROQ_API_KEY")
         if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
             config["model"] = "llama-3.3-70b-versatile"
-    elif p_lower == "grok":
-        env_api_key = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
-        if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
-            config["model"] = "grok-beta"
+    
     elif p_lower in ("gemini", "google"):
         env_api_key = os.getenv("GEMINI_API_KEY")
         if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
@@ -73,6 +70,8 @@ def load_llm_config() -> dict:
     if env_api_key:
         config["api_key"] = env_api_key
         
+    config["groq_api_key"] = os.getenv("GROQ_API_KEY") or config.get("groq_api_key")
+
     model = os.getenv("LLM_MODEL")
     if model:
         config["model"] = model
@@ -80,18 +79,51 @@ def load_llm_config() -> dict:
     return config
 
 
+def call_groq_api(api_key: str, user_prompt: str, system_prompt: str = "", model: str = "llama-3.3-70b-versatile", json_mode: bool = False) -> str:
+    """Helper to directly call Groq API as a backup LLM provider."""
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.0
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    res = requests.post(url, headers=headers, json=payload, timeout=30)
+    res.raise_for_status()
+    res_json = res.json()
+    return res_json["choices"][0]["message"]["content"].strip()
+
+
 def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
     """
     Calls the configured LLM API (OpenAI, Anthropic, Cohere, Groq, Grok, Gemini).
+    Automatically falls back to Groq API if primary provider fails or rate-limits.
     """
     config = load_llm_config()
     provider = config["provider"].lower()
     api_key = config["api_key"]
     model = config["model"]
     temp = config["temperature"]
+    groq_backup_key = config.get("groq_api_key") or os.getenv("GROQ_API_KEY")
 
     if not api_key:
-        # Mock mode if no key is configured
+        if groq_backup_key and provider != "groq":
+            print("[LLM Client] Primary API key missing. Using Groq API backup...")
+            try:
+                return call_groq_api(groq_backup_key, user_prompt, system_prompt, json_mode=json_mode)
+            except Exception as ge:
+                print(f"[LLM Client Warning] Groq backup failed: {ge}")
+
+        # Mock mode if no keys are configured
         print("WARNING: No API key configured. Returning mock/dry-run response.")
         if "fit" in user_prompt.lower() or "guess" in user_prompt.lower() or "unsure" in user_prompt.lower():
             if any(k in user_prompt.lower() for k in ["geotechnical", "consultancy", "survey", "audit", "testing"]):
@@ -126,26 +158,9 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
             return res_json["choices"][0]["message"]["content"].strip()
 
         elif provider in ("groq", "grok"):
-            url = "https://api.groq.com/openai/v1/chat/completions" if provider == "groq" else "https://api.x.ai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": model if model else ("llama-3.3-70b-versatile" if provider == "groq" else "grok-beta"),
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": temp
-            }
-            if json_mode:
-                payload["response_format"] = {"type": "json_object"}
-
-            res = requests.post(url, headers=headers, json=payload, timeout=30)
-            res.raise_for_status()
-            res_json = res.json()
-            return res_json["choices"][0]["message"]["content"].strip()
+            target_url = "https://api.groq.com/openai/v1/chat/completions" if provider == "groq" else "https://api.x.ai/v1/chat/completions"
+            target_model = model if model else ("llama-3.3-70b-versatile" if provider == "groq" else "grok-beta")
+            return call_groq_api(api_key, user_prompt, system_prompt, model=target_model, json_mode=json_mode)
 
         elif provider in ("gemini", "google"):
             target_model = model if model else "gemini-1.5-flash"
@@ -217,7 +232,13 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
             return ""
 
     except Exception as e:
-        print(f"LLM call failed: {e}")
+        print(f"Primary LLM provider ({provider}) call failed: {e}")
+        if groq_backup_key and provider != "groq":
+            print("[LLM Client] Falling back to Groq API (Llama 3.3 70B) backup...")
+            try:
+                return call_groq_api(groq_backup_key, user_prompt, system_prompt, json_mode=json_mode)
+            except Exception as groq_err:
+                print(f"[LLM Client Warning] Groq backup call failed: {groq_err}")
         return ""
 
 

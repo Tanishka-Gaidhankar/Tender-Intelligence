@@ -319,7 +319,7 @@ def trigger_stage2_scan(docname=None, tender_id=None):
         for row in getattr(parent_doc, table_field, []):
             t_id = getattr(row, "tender_id", None) or getattr(row, "tender_id_1", None)
             lead_status = frappe.db.get_value("Raw Tender Lead", t_id, "status") if t_id else getattr(row, "status", None)
-            if lead_status in ["Good Match", "May be", "rules_passed", "lead_created"]:
+            if lead_status in ["Good Match", "good_match", "rules_passed", "lead_created"]:
                 tenders_to_scrape.append({
                     "tender_id": t_id,
                     "link": getattr(row, "link", None) or getattr(row, "url", None),

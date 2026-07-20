@@ -30,8 +30,9 @@
   ],
   "llm": {
     "provider": "cohere",
-    "api_key": "cohere_g3LS6SZPcel2QSs30yvgKZzIHYVqplXlx4RoOYea3k8DpU",
+    "api_key": "YOUR_COHERE_API_KEY",
     "model": "command-r-plus-08-2024",
+    "groq_api_key": "YOUR_GROQ_API_KEY",
     "temperature": 0.0
   }
 }

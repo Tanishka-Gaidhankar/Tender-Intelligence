@@ -89,19 +89,24 @@ def parse_tender247_dashboard(html: str) -> list[dict]:
             days_left = int(days_match.group(1))
 
         # 5. Authority & Location
-        # Find element containing "India" to locate the authority + location text block
-        india_el = [el for el in card.find_all(string=True) if "India" in el]
         authority = None
         location = None
-        if india_el:
-            target_str = None
-            for el in india_el:
-                if " - " in el:
-                    target_str = el.strip()
-                    break
-            if not target_str:
-                target_str = india_el[0].strip()
+        
+        # Search for string elements in card containing " - " (excluding ID/Value/EMD labels)
+        candidates = []
+        for el in card.find_all(string=True):
+            text = el.strip()
+            if " - " in text and not re.search(r"T247\s*ID|Bid\s*Value|EMD|Due\s*Date", text, re.IGNORECASE):
+                candidates.append(text)
+                
+        target_str = candidates[0] if candidates else None
+        if not target_str:
+            # Fallback: find element containing "India"
+            india_el = [el.strip() for el in card.find_all(string=True) if "India" in el.strip()]
+            if india_el:
+                target_str = india_el[0]
 
+        if target_str:
             parts = target_str.split(" - ", 1)
             if len(parts) == 2:
                 authority = parts[0].strip()

@@ -24,14 +24,22 @@ def load_llm_config() -> dict:
         "temperature": 0.0
     }
 
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                llm_data = data.get("llm", {})
-                config.update(llm_data)
-        except Exception as e:
-            print(f"Error loading {CONFIG_FILE}: {e}")
+    possible_config_paths = [
+        "tender_rules_settings.json",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "tender_rules_settings.json")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tender_rules_settings.json"))
+    ]
+
+    for cpath in possible_config_paths:
+        if os.path.exists(cpath):
+            try:
+                with open(cpath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    llm_data = data.get("llm", {})
+                    config.update(llm_data)
+                break
+            except Exception as e:
+                print(f"Error loading {cpath}: {e}")
 
     # Environment variables override
     provider = os.getenv("LLM_PROVIDER")
@@ -163,3 +171,79 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
     except Exception as e:
         print(f"LLM call failed: {e}")
         return ""
+
+
+def generate_tender_screening_summary_and_score(tender: dict) -> dict:
+    """
+    Uses Cohere API (or loaded LLM provider) to generate a primary screening summary and AI fit score placeholder.
+    Falls back gracefully if the API is offline or returns an error.
+    """
+    title = tender.get("title") or "Unknown Tender"
+    authority = tender.get("authority") or "Unknown Authority"
+    location = tender.get("location") or "Not Specified"
+    value = tender.get("value") or tender.get("bid_value") or tender.get("tender_value") or "Not Specified"
+    
+    system_prompt = (
+        "You are an AI Tender Analyst for KBP Civil Engineering Services.\n"
+        "Evaluate the following tender opportunity based on its title, issuing authority, location, and estimated value.\n"
+        "Generate a concise 1-2 sentence primary screening summary and an initial AI fit score from 0 to 100.\n"
+        "Respond strictly in valid JSON:\n"
+        "{\n"
+        '  "ai_score": 75,\n'
+        '  "summary": "Short 1-2 sentence summary of the tender scope and relevance to civil engineering.",\n'
+        '  "status": "Good Match" | "May be" | "No Match"\n'
+        "}"
+    )
+
+    user_prompt = (
+        f"Tender Title: {title}\n"
+        f"Authority: {authority}\n"
+        f"Location: {location}\n"
+        f"Value: {value}\n\n"
+        "Generate JSON primary screening summary and AI score."
+    )
+
+    try:
+        response = call_llm(user_prompt, system_prompt, json_mode=True)
+        if response and response.strip():
+            import re
+            json_str = response.strip()
+            if not json_str.startswith("{"):
+                match = re.search(r"\{.*\}", json_str, re.DOTALL)
+                if match:
+                    json_str = match.group(0)
+            parsed = json.loads(json_str)
+            return {
+                "ai_score": int(parsed.get("ai_score", 70)),
+                "summary": str(parsed.get("summary", f"Primary screening completed for {title[:60]}")),
+                "status": str(parsed.get("status", "Good Match"))
+            }
+    except Exception as e:
+        print(f"[LLM Client Warning] Cohere API summary generation error: {e}")
+
+    # Heuristic fallback if Cohere API call fails or key is missing
+    title_lower = title.lower()
+    positive_keywords = ["audit", "testing", "investigation", "consultancy", "inspection", "survey", "structural", "bridge", "road", "water", "civil", "construction"]
+    negative_keywords = ["catering", "housekeeping", "software", "furniture", "vehicle", "security"]
+
+    is_pos = any(k in title_lower for k in positive_keywords)
+    is_neg = any(k in title_lower for k in negative_keywords)
+
+    if is_neg:
+        score = 25
+        status = "No Match"
+        summary = f"Primary screening: Low relevance. Title contains excluded category terms. (Location: {location})"
+    elif is_pos:
+        score = 80
+        status = "Good Match"
+        summary = f"Primary screening: Matches core civil engineering scope for {authority} in {location}."
+    else:
+        score = 60
+        status = "May be"
+        summary = f"Primary screening: Candidate opportunity in {location}. Requires secondary document review."
+
+    return {
+        "ai_score": score,
+        "summary": summary,
+        "status": status
+    }

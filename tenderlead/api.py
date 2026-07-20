@@ -132,10 +132,18 @@ def ingest_stage1_results(job_id, docname, tenders):
         child_meta = frappe.get_meta(child_doctype)
         fields_dict = {f.fieldname: f for f in child_meta.fields}
         
+        from tenderlead.ai.llm_client import generate_tender_screening_summary_and_score
+
         for t in tenders_list:
+            # Generate Cohere summary & score placeholder if missing
+            eval_res = generate_tender_screening_summary_and_score(t)
+            score_val = t.get("ai_score") if t.get("ai_score") is not None else eval_res.get("ai_score")
+            summary_val = t.get("ai_rationale") or t.get("summary") or eval_res.get("summary")
+            status_val = t.get("status") or eval_res.get("status", "Good Match")
+
             # 1. Create or update the global Raw Tender Lead document
             if not frappe.db.exists("Raw Tender Lead", t["tender_id"]):
-                lead_doc = frappe.get_doc({
+                lead_data = {
                     "doctype": "Raw Tender Lead",
                     "tender_id": t["tender_id"],
                     "source": t.get("source"),
@@ -146,13 +154,25 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "emd": t.get("emd"),
                     "due_date": normalize_date_string(t.get("due_date")),
                     "link": t.get("link"),
-                    "status": ""
-                })
+                    "status": status_val
+                }
+                # Attach AI score and rationale/summary if fields exist on DocType
+                if hasattr(frappe.get_meta("Raw Tender Lead"), "ai_score"):
+                    lead_data["ai_score"] = score_val
+                if hasattr(frappe.get_meta("Raw Tender Lead"), "ai_rationale"):
+                    lead_data["ai_rationale"] = summary_val
+
+                lead_doc = frappe.get_doc(lead_data)
                 lead_doc.insert(ignore_permissions=True)
             else:
-                # Update existing global lead status to empty string so it is clean for screening
                 lead_doc = frappe.get_doc("Raw Tender Lead", t["tender_id"])
-                lead_doc.status = ""
+                lead_doc.status = status_val
+                if hasattr(lead_doc, "location") and t.get("location"):
+                    lead_doc.location = t.get("location")
+                if hasattr(lead_doc, "ai_score"):
+                    lead_doc.ai_score = score_val
+                if hasattr(lead_doc, "ai_rationale"):
+                    lead_doc.ai_rationale = summary_val
                 lead_doc.save(ignore_permissions=True)
             
             # 2. Add reference to the Tender Primary Screening child table
@@ -163,8 +183,18 @@ def ingest_stage1_results(job_id, docname, tenders):
                 "location": t.get("location"),
                 "value": t.get("value"),
                 "due_date": normalize_date_string(t.get("due_date")),
-                "status": ""
+                "status": status_val
             }
+            if "ai_score" in fields_dict:
+                row_values["ai_score"] = score_val
+            if "summary" in fields_dict:
+                row_values["summary"] = summary_val
+            elif "ai_rationale" in fields_dict:
+                row_values["ai_rationale"] = summary_val
+
+            for link_field in ["link", "url", "view_tender_url", "source_link"]:
+                if link_field in fields_dict and t.get("link"):
+                    row_values[link_field] = t.get("link")
             
             # Set link references if they exist
             for link_f in ["raw_tender_lead", "raw_tender_id"]:
@@ -214,33 +244,33 @@ def calculate_statistics_direct(parent_doc):
     no_of_not_match = 0
     
     for t in tenders:
-        status = t.status or "New"
-        if status == "Good Match":
+        status_raw = str(t.status or "").strip()
+        status_lower = status_raw.lower()
+        if status_raw in ["Good Match", "good_match", "lead_created", "rules_passed"] or ("match" in status_lower and "no" not in status_lower and "not" not in status_lower) or "good" in status_lower:
             no_of_match += 1
-        elif status in ["May be", "AI Processing"]:
-            no_of_may_be += 1
-        elif status in ["No Match", "Rules Rejected", "Rejected AI"]:
+        elif status_raw in ["No Match", "no_match", "Rules Rejected", "Rejected AI", "rules_rejected", "rejected_ai"] or "no" in status_lower or "reject" in status_lower:
             no_of_not_match += 1
+        else:
+            no_of_may_be += 1
             
-    # Set fields dynamically depending on what exists on the server/doc
-    if hasattr(parent_doc, "tender_screen"):
-        parent_doc.tender_screen = no_of_tender_screen
-        parent_doc.match = no_of_match
-        parent_doc.may_be = no_of_may_be
-        parent_doc.no_of_not_match = no_of_not_match
-        if no_of_tender_screen > 0:
-            parent_doc.matched = (no_of_match / no_of_tender_screen) * 100.0
-        else:
-            parent_doc.matched = 0.0
-    else:
-        parent_doc.no_of_tender_screen = no_of_tender_screen
-        parent_doc.no_of_match = no_of_match
-        parent_doc.no_of_may_be = no_of_may_be
-        parent_doc.no_of_not_match = no_of_not_match
-        if no_of_tender_screen > 0:
-            parent_doc.percent_matched = (no_of_match / no_of_tender_screen) * 100.0
-        else:
-            parent_doc.percent_matched = 0.0
+    pct_matched = round((no_of_match / no_of_tender_screen) * 100.0, 2) if no_of_tender_screen > 0 else 0.0
+
+    # Set all possible field name variations on the parent doc to guarantee update
+    for field_pair in [
+        ("no_of_tender_screen", no_of_tender_screen),
+        ("tender_screen", no_of_tender_screen),
+        ("no_of_match", no_of_match),
+        ("match", no_of_match),
+        ("no_of_may_be", no_of_may_be),
+        ("may_be", no_of_may_be),
+        ("no_of_not_match", no_of_not_match),
+        ("not_match", no_of_not_match),
+        ("percent_matched", pct_matched),
+        ("matched", pct_matched)
+    ]:
+        fieldname, val = field_pair
+        if hasattr(parent_doc, fieldname):
+            setattr(parent_doc, fieldname, val)
             
     parent_doc.save(ignore_permissions=True)
     frappe.db.commit()

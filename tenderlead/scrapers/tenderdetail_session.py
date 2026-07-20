@@ -60,8 +60,12 @@ def setup_session_interactively():
 
         # Pre-fill credentials
         try:
-            page.fill("#txtUserName", TENDERDETAIL_USERNAME)
-            page.fill("#Password",    TENDERDETAIL_PASSWORD)
+            tab = page.locator("a[href='#username'], a.ml-tab-pill:has-text('Username')").first
+            if tab.count() > 0:
+                tab.click()
+                page.wait_for_timeout(500)
+            page.fill("#txtLogin",    TENDERDETAIL_USERNAME)
+            page.fill("#txtPassword", TENDERDETAIL_PASSWORD)
             print("Credentials auto-filled. Complete CAPTCHA if shown, then click Login.")
         except Exception as e:
             print(f"Auto-fill failed ({e}) — fill manually.")
@@ -113,9 +117,17 @@ def _do_headless_login(page: Page, context):
     try:
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(1000)
-        page.fill("#txtUserName", TENDERDETAIL_USERNAME)
-        page.fill("#Password",    TENDERDETAIL_PASSWORD)
+        
+        # Click Username tab first (by default Mobile OTP tab is selected)
+        tab = page.locator("a[href='#username'], a.ml-tab-pill:has-text('Username')").first
+        if tab.count() > 0:
+            tab.click()
+            page.wait_for_timeout(500)
+
+        page.fill("#txtLogin",    TENDERDETAIL_USERNAME)
+        page.fill("#txtPassword", TENDERDETAIL_PASSWORD)
         page.click("#btnLogin")
+        
         # Wait for redirect away from login page
         try:
             page.wait_for_url(lambda u: "/Account/LogOn" not in u, timeout=15000)
@@ -197,8 +209,8 @@ def get_query_ids_from_dashboard(page: Page) -> list[dict]:
             continue
 
         href = fresh_link["href"]
-        # URL pattern: /registeruser/indiantenders/{query_id}?tendertype=1
-        m = _re.search(r"/indiantenders/(\d+)", href)
+        # URL pattern: /registeruser/indiatenders/{query_id}/1 or /registeruser/indiantenders/{query_id}
+        m = _re.search(r"/india?tenders/(\d+)", href)
         if not m:
             continue
 
@@ -213,6 +225,7 @@ def get_query_ids_from_dashboard(page: Page) -> list[dict]:
                 "query_id":    query_id,
                 "name":        name,
                 "fresh_count": fresh_count,
+                "href":        href
             })
             print(f"  Query '{name}' (id={query_id}): {fresh_count} fresh tenders")
 
@@ -257,7 +270,7 @@ def scrape_all_query_tenders(page: Page, max_pages_per_query: int = 10) -> list[
         query_name = q["name"]
         print(f"\nScraping query: '{query_name}' (id={query_id}, {q['fresh_count']} fresh tenders)")
 
-        listing_url = f"{BASE_URL}/registeruser/indiantenders/{query_id}?tendertype=1"
+        listing_url = f"{BASE_URL}{q['href']}" if q.get("href", "").startswith("/") else f"{BASE_URL}/registeruser/indiatenders/{query_id}/1"
         try:
             page.goto(listing_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)

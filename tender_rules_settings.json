@@ -30,7 +30,7 @@
   ],
   "llm": {
     "provider": "cohere",
-    "api_key": "bpnXmrsGhVwkNoKbejAlrbi2Uu1nCDm4DnTWmzbL",
+    "api_key": "cohere_g3LS6SZPcel2QSs30yvgKZzIHYVqplXlx4RoOYea3k8DpU",
     "model": "command-r-plus-08-2024",
     "temperature": 0.0
   }

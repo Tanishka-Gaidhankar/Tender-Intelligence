@@ -80,13 +80,17 @@ def parse_tenderdetail_listings(html: str) -> list[dict]:
                 due_date = f"{month.get_text(strip=True)} {day.get_text(strip=True)}, {year.get_text(strip=True)}"
 
         # ── 4. Location / State ────────────────────────────────────────────────
-        state_li = row.find("li", class_="state")
+        state_li = row.find("li", class_="state") or row.find("li", class_=re.compile(r"loc|state|city", re.IGNORECASE))
         location = None
         if state_li:
-            # Remove any icon tags
-            for icon in state_li.find_all("i"):
-                icon.decompose()
-            location = state_li.get_text(strip=True)
+            # Clone or work on text after decomposing icon tags
+            state_clone = BeautifulSoup(str(state_li), "html.parser")
+            for icon in state_clone.find_all(["i", "span"]):
+                if icon.get("class") and any("fa" in c for c in icon.get("class")):
+                    icon.decompose()
+            location = state_clone.get_text(strip=True)
+            if not location:
+                location = state_li.get_text(strip=True)
 
         # ── 5. Tender Value ────────────────────────────────────────────────────
         price_li = row.find("li", class_="price")

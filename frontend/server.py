@@ -329,27 +329,43 @@ class TenderDashboardAPIHandler(http.server.SimpleHTTPRequestHandler):
                 "unsure":         "unsure",
                 "new":            "unsure",
             }
+
+            from tenderlead.ai.llm_client import generate_tender_screening_summary_and_score
+
             for r in rows:
                 is_lead = r["lead_id"] is not None
                 raw_status = "good_match" if is_lead else r["status"]
                 status = STATUS_NORM.get(raw_status, raw_status)
-                # Arrival date: use date portion of created_at (first insert = first time seen)
                 raw_created = r["created_at"]
                 arrival_date = raw_created.split('T')[0] if raw_created and 'T' in raw_created else (raw_created or 'N/A')
+
+                score_val = r["lead_ai_score"] if r["lead_ai_score"] is not None else r["raw_ai_score"]
+                summary_val = r["lead_ai_rationale"] if r["lead_ai_rationale"] is not None else r["raw_ai_rationale"]
+
+                if score_val is None or not summary_val:
+                    eval_placeholder = generate_tender_screening_summary_and_score({
+                        "title": r["title"],
+                        "authority": r["authority"],
+                        "location": r["location"],
+                        "value": r["value"]
+                    })
+                    if score_val is None:
+                        score_val = eval_placeholder.get("ai_score", 70)
+                    if not summary_val:
+                        summary_val = eval_placeholder.get("summary", "")
 
                 tenders.append({
                     "tender_id": r["tender_id"],
                     "source": r["source"],
                     "title": r["title"],
                     "authority": r["authority"],
-                    "location": r["location"],
+                    "location": r["location"] or "Not Specified",
                     "value": r["value"],
                     "emd": r["emd"],
                     "due_date": r["due_date"],
                     "status": status,
-                    # Fallback raw values or lead values
-                    "ai_score": r["lead_ai_score"] if r["lead_ai_score"] is not None else r["raw_ai_score"],
-                    "ai_rationale": r["lead_ai_rationale"] if r["lead_ai_rationale"] is not None else r["raw_ai_rationale"],
+                    "ai_score": score_val,
+                    "ai_rationale": summary_val,
                     "link": r["link"],
                     "created_at": r["created_at"],
                     "arrival_date": arrival_date,

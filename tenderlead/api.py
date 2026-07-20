@@ -163,9 +163,13 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "status": status_val
                 }
                 # Attach AI score and rationale/summary if fields exist on DocType
-                if hasattr(frappe.get_meta("Raw Tender Lead"), "ai_score"):
+                lead_meta = frappe.get_meta("Raw Tender Lead")
+                lead_fields = {f.fieldname for f in lead_meta.fields}
+                if "ai_score" in lead_fields:
                     lead_data["ai_score"] = score_val
-                if hasattr(frappe.get_meta("Raw Tender Lead"), "ai_rationale"):
+                if "summary" in lead_fields:
+                    lead_data["summary"] = summary_val
+                if "ai_rationale" in lead_fields:
                     lead_data["ai_rationale"] = summary_val
 
                 lead_doc = frappe.get_doc(lead_data)
@@ -181,6 +185,8 @@ def ingest_stage1_results(job_id, docname, tenders):
                     lead_doc.emd = emd_str
                 if hasattr(lead_doc, "ai_score"):
                     lead_doc.ai_score = score_val
+                if hasattr(lead_doc, "summary"):
+                    lead_doc.summary = summary_val
                 if hasattr(lead_doc, "ai_rationale"):
                     lead_doc.ai_rationale = summary_val
                 lead_doc.save(ignore_permissions=True)
@@ -199,7 +205,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                 row_values["ai_score"] = score_val
             if "summary" in fields_dict:
                 row_values["summary"] = summary_val
-            elif "ai_rationale" in fields_dict:
+            if "ai_rationale" in fields_dict:
                 row_values["ai_rationale"] = summary_val
 
             for link_field in ["link", "url", "view_tender_url", "source_link"]:

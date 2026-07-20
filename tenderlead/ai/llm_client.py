@@ -48,15 +48,27 @@ def load_llm_config() -> dict:
 
     # Load correct API key depending on provider
     env_api_key = None
-    if config["provider"] == "openai":
+    p_lower = config["provider"].lower()
+    if p_lower == "openai":
         env_api_key = os.getenv("OPENAI_API_KEY")
-    elif config["provider"] == "anthropic":
+    elif p_lower == "anthropic":
         env_api_key = os.getenv("ANTHROPIC_API_KEY")
-    elif config["provider"] == "cohere":
+    elif p_lower == "cohere":
         env_api_key = os.getenv("COHERE_API_KEY")
-        # Set default model for Cohere if it was left as OpenAI default
-        if config["model"] == "gpt-4o-mini" or config["model"] == "command-r-plus":
+        if config["model"] in ("gpt-4o-mini", "command-r-plus"):
             config["model"] = "command-r-plus-08-2024"
+    elif p_lower == "groq":
+        env_api_key = os.getenv("GROQ_API_KEY")
+        if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
+            config["model"] = "llama-3.3-70b-versatile"
+    elif p_lower == "grok":
+        env_api_key = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
+        if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
+            config["model"] = "grok-beta"
+    elif p_lower in ("gemini", "google"):
+        env_api_key = os.getenv("GEMINI_API_KEY")
+        if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
+            config["model"] = "gemini-1.5-flash"
 
     if env_api_key:
         config["api_key"] = env_api_key
@@ -70,18 +82,10 @@ def load_llm_config() -> dict:
 
 def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
     """
-    Calls the configured LLM API.
-    
-    Args:
-        user_prompt: The prompt text for the user.
-        system_prompt: System instructions.
-        json_mode: Attempt to enforce JSON response formatting (supported on OpenAI and Cohere).
-        
-    Returns:
-        The response content as a string, or empty string on failure.
+    Calls the configured LLM API (OpenAI, Anthropic, Cohere, Groq, Grok, Gemini).
     """
     config = load_llm_config()
-    provider = config["provider"]
+    provider = config["provider"].lower()
     api_key = config["api_key"]
     model = config["model"]
     temp = config["temperature"]
@@ -90,12 +94,10 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
         # Mock mode if no key is configured
         print("WARNING: No API key configured. Returning mock/dry-run response.")
         if "fit" in user_prompt.lower() or "guess" in user_prompt.lower() or "unsure" in user_prompt.lower():
-            # Mock title-guess
             if any(k in user_prompt.lower() for k in ["geotechnical", "consultancy", "survey", "audit", "testing"]):
                 return '{"fit": "yes", "rationale": "Mock check: matches consultancy/investigation keywords"}'
             else:
                 return '{"fit": "no", "rationale": "Mock check: unrelated topic"}'
-        # Return generic JSON if JSON mode
         if json_mode:
             return '{"score": 50, "rationale": "Mock API score due to missing API keys"}'
         return "Mock response: API keys missing."
@@ -122,6 +124,52 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
             res.raise_for_status()
             res_json = res.json()
             return res_json["choices"][0]["message"]["content"].strip()
+
+        elif provider in ("groq", "grok"):
+            url = "https://api.groq.com/openai/v1/chat/completions" if provider == "groq" else "https://api.x.ai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model if model else ("llama-3.3-70b-versatile" if provider == "groq" else "grok-beta"),
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": temp
+            }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
+            res.raise_for_status()
+            res_json = res.json()
+            return res_json["choices"][0]["message"]["content"].strip()
+
+        elif provider in ("gemini", "google"):
+            target_model = model if model else "gemini-1.5-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": f"{system_prompt}\n\n{user_prompt}"}
+                        ]
+                    }
+                ]
+            }
+            if json_mode:
+                payload["generationConfig"] = {"responseMimeType": "application/json"}
+
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
+            res.raise_for_status()
+            res_json = res.json()
+            candidates = res_json.get("candidates", [])
+            if candidates:
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+            return ""
 
         elif provider == "anthropic":
             url = "https://api.anthropic.com/v1/messages"

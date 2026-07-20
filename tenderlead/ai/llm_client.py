@@ -13,10 +13,20 @@ CONFIG_FILE = "tender_rules_settings.json"
 
 
 def load_llm_config() -> dict:
-    """
-    Loads LLM configuration from tender_rules_settings.json.
-    Falls back to environment variables if settings file does not exist.
-    """
+    """Loads LLM settings from tender_rules_settings.json, .env file, or env vars."""
+    # Load .env file if present
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+        except Exception as e:
+            print(f"Error loading .env file: {e}")
+
     config = {
         "provider": "openai",
         "api_key": None,

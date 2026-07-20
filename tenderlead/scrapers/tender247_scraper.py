@@ -68,14 +68,31 @@ def parse_tender247_dashboard(html: str) -> list[dict]:
 
         # 3. Bid Value & EMD
         bid_value = None
-        bid_match = re.search(r"Bid\s*Value\s*:\s*₹?\s*([\d\.]+\s*(?:Cr\.|Lakh|K)?)", card_text, re.IGNORECASE)
+        bid_match = re.search(r"(?:Bid\s*Value|Tender\s*Value|Estimated\s*(?:Cost|Value)|Value|Cost)\s*:\s*₹?\s*([^\n\r<]+)", card_text, re.IGNORECASE)
         if bid_match:
-            bid_value = bid_match.group(1).strip()
+            raw_bv = bid_match.group(1).strip()
+            raw_bv = re.split(r"\b(?:EMD|Due|Days|T247)\b", raw_bv, flags=re.IGNORECASE)[0].strip()
+            raw_bv = raw_bv.rstrip(":- ").strip()
+            if raw_bv:
+                bid_value = raw_bv
+
+        if not bid_value:
+            curr_match = re.search(r"₹\s*([\d\.,]+\s*(?:Cr\.|Lakh|K|Thousand|Crore|Lakhs)?)", card_text, re.IGNORECASE)
+            if curr_match:
+                bid_value = curr_match.group(0).strip()
+            else:
+                bid_value = "Refer Document"
             
         emd = None
-        emd_match = re.search(r"EMD\s*:\s*₹?\s*([\d\.]+\s*(?:Cr\.|Lakh|K)?)", card_text, re.IGNORECASE)
+        emd_match = re.search(r"EMD\s*:\s*₹?\s*([^\n\r<]+)", card_text, re.IGNORECASE)
         if emd_match:
-            emd = emd_match.group(1).strip()
+            raw_emd = emd_match.group(1).strip()
+            raw_emd = re.split(r"\b(?:Due|Days|T247|Bid|Value)\b", raw_emd, flags=re.IGNORECASE)[0].strip()
+            raw_emd = raw_emd.rstrip(":- ").strip()
+            if raw_emd:
+                emd = raw_emd
+        if not emd:
+            emd = "Refer Document"
 
         # 4. Due Date & Days Left
         due_date = None

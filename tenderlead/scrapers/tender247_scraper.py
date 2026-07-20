@@ -92,6 +92,14 @@ def parse_tender247_dashboard(html: str) -> list[dict]:
         authority = None
         location = None
         
+        # Check for location pin marker "📍" or standalone location element containing "India"
+        loc_pin_els = [
+            el.strip() for el in card.find_all(string=True) 
+            if "📍" in el or ("India" in el and " - " not in el and (not title or el.strip() != title))
+        ]
+        if loc_pin_els:
+            location = loc_pin_els[0].replace("📍", "").strip()[:140]
+
         # Search for string elements in card containing " - " (excluding Title/ID/Value/EMD labels)
         candidates = []
         for el in card.find_all(string=True):
@@ -104,18 +112,13 @@ def parse_tender247_dashboard(html: str) -> list[dict]:
                 candidates.append(text)
                 
         target_str = candidates[0] if candidates else None
-        if not target_str:
-            # Fallback: find element containing "India"
-            india_el = [el.strip() for el in card.find_all(string=True) if "India" in el.strip() and (not title or el.strip() != title)]
-            if india_el:
-                target_str = india_el[0]
-
         if target_str:
             parts = target_str.split(" - ", 1)
             if len(parts) == 2:
                 authority = parts[0].strip()[:140]
-                location = parts[1].strip()[:140]
-            else:
+                if not location:
+                    location = parts[1].strip()[:140]
+            elif not location:
                 location = target_str[:140]
 
         # 6. AI Summary URL

@@ -91,6 +91,8 @@ def parse_tenderdetail_listings(html: str) -> list[dict]:
             location = state_clone.get_text(strip=True)
             if not location:
                 location = state_li.get_text(strip=True)
+        if location:
+            location = location[:140].strip()
 
         # ── 5. Tender Value ────────────────────────────────────────────────────
         price_li = row.find("li", class_="price")

@@ -92,27 +92,31 @@ def parse_tender247_dashboard(html: str) -> list[dict]:
         authority = None
         location = None
         
-        # Search for string elements in card containing " - " (excluding ID/Value/EMD labels)
+        # Search for string elements in card containing " - " (excluding Title/ID/Value/EMD labels)
         candidates = []
         for el in card.find_all(string=True):
             text = el.strip()
-            if " - " in text and not re.search(r"T247\s*ID|Bid\s*Value|EMD|Due\s*Date", text, re.IGNORECASE):
+            if not text:
+                continue
+            if title and (text == title or text in title or len(text) > 180):
+                continue
+            if " - " in text and not re.search(r"T247\s*ID|Bid\s*Value|EMD|Due\s*Date|Days?\s*Left", text, re.IGNORECASE):
                 candidates.append(text)
                 
         target_str = candidates[0] if candidates else None
         if not target_str:
             # Fallback: find element containing "India"
-            india_el = [el.strip() for el in card.find_all(string=True) if "India" in el.strip()]
+            india_el = [el.strip() for el in card.find_all(string=True) if "India" in el.strip() and (not title or el.strip() != title)]
             if india_el:
                 target_str = india_el[0]
 
         if target_str:
             parts = target_str.split(" - ", 1)
             if len(parts) == 2:
-                authority = parts[0].strip()
-                location = parts[1].strip()
+                authority = parts[0].strip()[:140]
+                location = parts[1].strip()[:140]
             else:
-                location = target_str
+                location = target_str[:140]
 
         # 6. AI Summary URL
         ai_link = card.find("a", href=re.compile(r"/auth/tender/", re.IGNORECASE))

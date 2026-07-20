@@ -135,6 +135,10 @@ def ingest_stage1_results(job_id, docname, tenders):
         from tenderlead.ai.llm_client import generate_tender_screening_summary_and_score
 
         for t in tenders_list:
+            # Safely truncate location to max 140 chars to comply with Frappe Data field limits
+            loc_val = (t.get("location") or "")[:140].strip()
+            t["location"] = loc_val
+
             # Generate Cohere summary & score placeholder if missing
             eval_res = generate_tender_screening_summary_and_score(t)
             score_val = t.get("ai_score") if t.get("ai_score") is not None else eval_res.get("ai_score")
@@ -149,7 +153,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "source": t.get("source"),
                     "title": t.get("title"),
                     "authority": t.get("authority"),
-                    "location": t.get("location"),
+                    "location": loc_val,
                     "value": t.get("value"),
                     "emd": t.get("emd"),
                     "due_date": normalize_date_string(t.get("due_date")),
@@ -167,8 +171,8 @@ def ingest_stage1_results(job_id, docname, tenders):
             else:
                 lead_doc = frappe.get_doc("Raw Tender Lead", t["tender_id"])
                 lead_doc.status = status_val
-                if hasattr(lead_doc, "location") and t.get("location"):
-                    lead_doc.location = t.get("location")
+                if hasattr(lead_doc, "location"):
+                    lead_doc.location = loc_val
                 if hasattr(lead_doc, "ai_score"):
                     lead_doc.ai_score = score_val
                 if hasattr(lead_doc, "ai_rationale"):
@@ -180,7 +184,7 @@ def ingest_stage1_results(job_id, docname, tenders):
                 "source": t.get("source"),
                 "title": t.get("title"),
                 "authority": t.get("authority"),
-                "location": t.get("location"),
+                "location": loc_val,
                 "value": t.get("value"),
                 "due_date": normalize_date_string(t.get("due_date")),
                 "status": status_val

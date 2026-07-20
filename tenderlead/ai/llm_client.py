@@ -253,13 +253,16 @@ def generate_tender_screening_summary_and_score(tender: dict) -> dict:
     value = tender.get("value") or tender.get("bid_value") or tender.get("tender_value") or "Not Specified"
     
     system_prompt = (
-        "You are an AI Tender Analyst for KBP Civil Engineering Services.\n"
-        "Evaluate the following tender opportunity based on its title, issuing authority, location, and estimated value.\n"
-        "Generate a concise 1-2 sentence primary screening summary and an initial AI fit score from 0 to 100.\n"
+        "You are a Senior AI Procurement Analyst for KBP Civil Engineering Services.\n"
+        "Evaluate the tender opportunity against KBP's capabilities (Structural Audit, NDT Testing, Geotechnical Investigation, Quality Inspection, Civil Consultancy).\n"
+        "Generate a detailed Chain-of-Thought summary explaining:\n"
+        "1. Scope Summary (1 sentence)\n"
+        "2. Key Matched/Mismatched Keywords\n"
+        "3. Reasoning for the AI Score\n\n"
         "Respond strictly in valid JSON:\n"
         "{\n"
-        '  "ai_score": 75,\n'
-        '  "summary": "Short 1-2 sentence summary of the tender scope and relevance to civil engineering.",\n'
+        '  "ai_score": 85,\n'
+        '  "summary": "Scope: Structural audit of overhead tanks.\\nMatched Keywords: structural audit, NDT testing.\\nScore Rationale: High alignment with KBP core services in Rajasthan.",\n'
         '  "status": "Good Match" | "May be" | "No Match"\n'
         "}"
     )
@@ -269,7 +272,7 @@ def generate_tender_screening_summary_and_score(tender: dict) -> dict:
         f"Authority: {authority}\n"
         f"Location: {location}\n"
         f"Value: {value}\n\n"
-        "Generate JSON primary screening summary and AI score."
+        "Generate JSON primary screening summary with explicit Chain-of-Thought score rationale and matched keywords."
     )
 
     try:
@@ -284,32 +287,44 @@ def generate_tender_screening_summary_and_score(tender: dict) -> dict:
             parsed = json.loads(json_str)
             return {
                 "ai_score": int(parsed.get("ai_score", 70)),
-                "summary": str(parsed.get("summary", f"Primary screening completed for {title[:60]}")),
+                "summary": str(parsed.get("summary", f"Scope: {title[:60]}\\nReasoning: Evaluated against civil engineering capabilities.")),
                 "status": str(parsed.get("status", "Good Match"))
             }
     except Exception as e:
-        print(f"[LLM Client Warning] Cohere API summary generation error: {e}")
+        print(f"[LLM Client Warning] Summary generation error: {e}")
 
-    # Heuristic fallback if Cohere API call fails or key is missing
+    # Heuristic fallback if API call fails
     title_lower = title.lower()
     positive_keywords = ["audit", "testing", "investigation", "consultancy", "inspection", "survey", "structural", "bridge", "road", "water", "civil", "construction"]
     negative_keywords = ["catering", "housekeeping", "software", "furniture", "vehicle", "security"]
 
-    is_pos = any(k in title_lower for k in positive_keywords)
-    is_neg = any(k in title_lower for k in negative_keywords)
+    matched_pos = [k for k in positive_keywords if k in title_lower]
+    matched_neg = [k for k in negative_keywords if k in title_lower]
 
-    if is_neg:
+    if matched_neg:
         score = 25
         status = "No Match"
-        summary = f"Primary screening: Low relevance. Title contains excluded category terms. (Location: {location})"
-    elif is_pos:
-        score = 80
+        summary = (
+            f"Scope: {title[:80]}\n"
+            f"Excluded Keywords Matched: {', '.join(matched_neg)}\n"
+            f"Score Rationale: Disqualified (Score: 25/100) due to presence of excluded category terms."
+        )
+    elif matched_pos:
+        score = 85
         status = "Good Match"
-        summary = f"Primary screening: Matches core civil engineering scope for {authority} in {location}."
+        summary = (
+            f"Scope: {title[:80]}\n"
+            f"Matched Keywords: {', '.join(matched_pos)}\n"
+            f"Score Rationale: High Fit (Score: 85/100) — Matches core civil engineering & consultancy capabilities for {authority} in {location}."
+        )
     else:
         score = 60
         status = "May be"
-        summary = f"Primary screening: Candidate opportunity in {location}. Requires secondary document review."
+        summary = (
+            f"Scope: {title[:80]}\n"
+            f"Matched Keywords: None (General civil scope)\n"
+            f"Score Rationale: Moderate Fit (Score: 60/100) — General opportunity in {location}. Requires secondary document review."
+        )
 
     return {
         "ai_score": score,

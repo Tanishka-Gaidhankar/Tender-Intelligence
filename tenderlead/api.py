@@ -370,6 +370,34 @@ def trigger_stage2_scan(docname=None, tender_id=None):
     if not tenders_to_scrape:
         frappe.throw("No valid tender selected or found for secondary screening.")
 
+    # Immediately instantiate/ensure Tender Secondary Screening record exists in ERPNext Desk
+    for t in tenders_to_scrape:
+        t_id = t.get("tender_id")
+        if t_id:
+            try:
+                meta = frappe.get_meta("Tender Secondary Screening")
+                fields = {f.fieldname for f in meta.fields}
+                if frappe.db.exists("Tender Secondary Screening", {"tender_id": t_id}):
+                    sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": t_id})
+                elif frappe.db.exists("Tender Secondary Screening", {"tender_title": t.get("title")}):
+                    sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_title": t.get("title")})
+                else:
+                    sec_doc = frappe.new_doc("Tender Secondary Screening")
+                
+                for f_name, f_val in [
+                    ("tender_id", t_id),
+                    ("tender_id_1", t_id),
+                    ("tender_title", t.get("title")),
+                    ("title", t.get("title")),
+                    ("source", t.get("source"))
+                ]:
+                    if f_name in fields and f_val:
+                        sec_doc.set(f_name, f_val)
+                sec_doc.save(ignore_permissions=True)
+                frappe.db.commit()
+            except Exception as e:
+                frappe.log_error(f"Error initializing Tender Secondary Screening for {t_id}: {e}")
+
     payload_data = {
         "docname": docname,
         "tender_id": tender_id,

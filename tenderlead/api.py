@@ -162,15 +162,13 @@ def ingest_stage1_results(job_id, docname, tenders):
                     "link": t.get("link"),
                     "status": status_val
                 }
-                # Attach AI score and rationale/summary if fields exist on DocType
                 lead_meta = frappe.get_meta("Raw Tender Lead")
                 lead_fields = {f.fieldname for f in lead_meta.fields}
                 if "ai_score" in lead_fields:
                     lead_data["ai_score"] = score_val
-                if "summary" in lead_fields:
-                    lead_data["summary"] = summary_val
-                if "ai_rationale" in lead_fields:
-                    lead_data["ai_rationale"] = summary_val
+                for s_field in ["summary", "ai_rationale", "ai_summary", "rationale"]:
+                    if s_field in lead_fields:
+                        lead_data[s_field] = summary_val
 
                 lead_doc = frappe.get_doc(lead_data)
                 lead_doc.insert(ignore_permissions=True)
@@ -185,10 +183,9 @@ def ingest_stage1_results(job_id, docname, tenders):
                     lead_doc.emd = emd_str
                 if hasattr(lead_doc, "ai_score"):
                     lead_doc.ai_score = score_val
-                if hasattr(lead_doc, "summary"):
-                    lead_doc.summary = summary_val
-                if hasattr(lead_doc, "ai_rationale"):
-                    lead_doc.ai_rationale = summary_val
+                for s_field in ["summary", "ai_rationale", "ai_summary", "rationale"]:
+                    if hasattr(lead_doc, s_field):
+                        setattr(lead_doc, s_field, summary_val)
                 lead_doc.save(ignore_permissions=True)
             
             # 2. Add reference to the Tender Primary Screening child table
@@ -203,10 +200,9 @@ def ingest_stage1_results(job_id, docname, tenders):
             }
             if "ai_score" in fields_dict:
                 row_values["ai_score"] = score_val
-            if "summary" in fields_dict:
-                row_values["summary"] = summary_val
-            if "ai_rationale" in fields_dict:
-                row_values["ai_rationale"] = summary_val
+            for s_field in ["summary", "ai_rationale", "ai_summary", "rationale", "summary_rationale"]:
+                if s_field in fields_dict:
+                    row_values[s_field] = summary_val
 
             for link_field in ["link", "url", "view_tender_url", "source_link"]:
                 if link_field in fields_dict and t.get("link"):
@@ -233,11 +229,8 @@ def ingest_stage1_results(job_id, docname, tenders):
         parent_doc.save(ignore_permissions=True)
         frappe.db.commit()
         
-        # 3. Recalculate statistics on parent screening doc (using fallback if method missing)
-        if hasattr(parent_doc, "refresh_tenders"):
-            parent_doc.refresh_tenders()
-        else:
-            calculate_statistics_direct(parent_doc)
+        # 3. Recalculate statistics and populate any missing row summaries
+        calculate_statistics_direct(parent_doc)
         
         job.status = "Completed"
         job.finished_at = now_datetime()
@@ -250,7 +243,9 @@ def ingest_stage1_results(job_id, docname, tenders):
         return {"status": "error", "message": str(e)}
 
 def calculate_statistics_direct(parent_doc):
-    """Fallback statistics calculator directly updating the parent doc fields."""
+    """Fallback statistics calculator directly updating parent doc fields and generating missing summaries."""
+    from tenderlead.ai.llm_client import generate_tender_screening_summary_and_score
+
     table_field = "raw_tender_leads" if hasattr(parent_doc, "raw_tender_leads") else "raw_tender_leads_tbl"
     tenders = getattr(parent_doc, table_field, []) or []
     
@@ -260,7 +255,7 @@ def calculate_statistics_direct(parent_doc):
     no_of_not_match = 0
     
     for t in tenders:
-        status_raw = str(t.status or "").strip()
+        status_raw = str(getattr(t, "status", None) or "").strip()
         status_lower = status_raw.lower()
         if status_raw in ["Good Match", "good_match", "lead_created", "rules_passed"] or ("match" in status_lower and "no" not in status_lower and "not" not in status_lower) or "good" in status_lower:
             no_of_match += 1
@@ -268,6 +263,23 @@ def calculate_statistics_direct(parent_doc):
             no_of_not_match += 1
         else:
             no_of_may_be += 1
+
+        # Check if summary is missing on child row and generate it
+        current_sum = getattr(t, "summary", None) or getattr(t, "ai_rationale", None) or getattr(t, "ai_summary", None)
+        if not current_sum:
+            eval_res = generate_tender_screening_summary_and_score({
+                "title": getattr(t, "title", None) or getattr(t, "tender_id", "Tender"),
+                "authority": getattr(t, "authority", None),
+                "location": getattr(t, "location", None),
+                "value": getattr(t, "value", None)
+            })
+            gen_summary = eval_res.get("summary", "")
+            gen_score = eval_res.get("ai_score", 70)
+            for s_field in ["summary", "ai_rationale", "ai_summary", "rationale", "summary_rationale"]:
+                if hasattr(t, s_field):
+                    setattr(t, s_field, gen_summary)
+            if hasattr(t, "ai_score") and not getattr(t, "ai_score", None):
+                setattr(t, "ai_score", gen_score)
             
     pct_matched = round((no_of_match / no_of_tender_screen) * 100.0, 2) if no_of_tender_screen > 0 else 0.0
 

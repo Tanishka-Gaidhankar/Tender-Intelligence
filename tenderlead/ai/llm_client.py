@@ -76,6 +76,10 @@ def load_llm_config() -> dict:
         env_api_key = os.getenv("GEMINI_API_KEY")
         if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
             config["model"] = "gemini-1.5-flash"
+    elif p_lower == "ollama":
+        config["api_key"] = "ollama_local"
+        if config["model"] in ("gpt-4o-mini", "command-r-plus-08-2024"):
+            config["model"] = "llama3.1"
 
     if env_api_key:
         config["api_key"] = env_api_key
@@ -115,7 +119,7 @@ def call_groq_api(api_key: str, user_prompt: str, system_prompt: str = "", model
 
 def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
     """
-    Calls the configured LLM API (OpenAI, Anthropic, Cohere, Groq, Grok, Gemini).
+    Calls the configured LLM API (OpenAI, Anthropic, Cohere, Groq, Grok, Gemini, Ollama).
     Automatically falls back to Groq API if primary provider fails or rate-limits.
     """
     config = load_llm_config()
@@ -145,7 +149,25 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
         return "Mock response: API keys missing."
 
     try:
-        if provider == "openai":
+        if provider == "ollama":
+            url = os.getenv("OLLAMA_HOST", "http://localhost:11434/api/generate")
+            payload = {
+                "model": model if model else "llama3.1",
+                "prompt": f"{system_prompt}\n\n{user_prompt}",
+                "stream": False,
+                "options": {
+                    "temperature": temp
+                }
+            }
+            if json_mode:
+                payload["format"] = "json"
+
+            res = requests.post(url, json=payload, timeout=60)
+            res.raise_for_status()
+            res_json = res.json()
+            return res_json.get("response", "").strip()
+
+        elif provider == "openai":
             url = "https://api.openai.com/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {api_key}",

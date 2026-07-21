@@ -264,6 +264,16 @@ def calculate_statistics_direct(parent_doc):
         else:
             no_of_may_be += 1
 
+        # Check if value is missing on child row and set default
+        current_val = getattr(t, "value", None)
+        if not current_val and hasattr(t, "value"):
+            setattr(t, "value", "Refer Document")
+
+        # Check if location is missing on child row and set default
+        current_loc = getattr(t, "location", None)
+        if not current_loc and hasattr(t, "location"):
+            setattr(t, "location", "Not Specified")
+
         # Check if summary is missing on child row and generate it
         current_sum = getattr(t, "summary", None) or getattr(t, "ai_rationale", None) or getattr(t, "ai_summary", None)
         if not current_sum:
@@ -271,7 +281,7 @@ def calculate_statistics_direct(parent_doc):
                 "title": getattr(t, "title", None) or getattr(t, "tender_id", "Tender"),
                 "authority": getattr(t, "authority", None),
                 "location": getattr(t, "location", None),
-                "value": getattr(t, "value", None)
+                "value": getattr(t, "value", None) or "Refer Document"
             })
             gen_summary = eval_res.get("summary", "")
             gen_score = eval_res.get("ai_score", 70)
@@ -280,6 +290,24 @@ def calculate_statistics_direct(parent_doc):
                     setattr(t, s_field, gen_summary)
             if hasattr(t, "ai_score") and not getattr(t, "ai_score", None):
                 setattr(t, "ai_score", gen_score)
+
+            # Sync back to Raw Tender Lead document in DB
+            t_id = getattr(t, "tender_id", None) or getattr(t, "tender_id_1", None) or getattr(t, "raw_tender_lead", None)
+            if t_id and frappe.db.exists("Raw Tender Lead", t_id):
+                try:
+                    lead = frappe.get_doc("Raw Tender Lead", t_id)
+                    s_needed = False
+                    for s_f in ["summary", "ai_rationale"]:
+                        if hasattr(lead, s_f) and not getattr(lead, s_f, None):
+                            setattr(lead, s_f, gen_summary)
+                            s_needed = True
+                    if hasattr(lead, "value") and not getattr(lead, "value", None):
+                        lead.value = "Refer Document"
+                        s_needed = True
+                    if s_needed:
+                        lead.save(ignore_permissions=True)
+                except Exception:
+                    pass
             
     pct_matched = round((no_of_match / no_of_tender_screen) * 100.0, 2) if no_of_tender_screen > 0 else 0.0
 

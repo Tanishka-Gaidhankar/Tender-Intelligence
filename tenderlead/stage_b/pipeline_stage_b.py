@@ -380,7 +380,8 @@ def run_stage_b(days_back: int = 2):
 
 def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
     """
-    Parses Eligibility Criteria (EC) and Document Checklist (DC) from Tender247's AI summary text.
+    Parses Eligibility Criteria (EC) and Document Checklist (DC) from Tender247's AI summary text,
+    filtering out top-level vertical metadata (e.g. Tender Id, GEM Bid number, dates).
     """
     if not text:
         return "", []
@@ -389,34 +390,76 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
     eligibility_lines = []
     documents_lines = []
     
-    # Start as "eligibility" so that general summary details/pre-qualification parameters
-    # at the top are correctly captured.
+    metadata_keys = [
+        "tender id", "gem bid number", "bid end date", "bid opening date", 
+        "bid offer validity", "ministry state name", "department name", 
+        "organisation name", "office name", "item category", 
+        "nature of requirement", "submission date", "opening date", 
+        "tender estimated cost", "emd", "tender document fees", 
+        "brief", "description", "quantity", "website", "msme exemption", 
+        "startup exemption", "site location", "contact person", 
+        "contact address", "contact number", "mse purchase preference", 
+        "surety bond", "pre bid meeting date"
+    ]
+    
     current_section = "eligibility"
-    for line in lines:
-        line_strip = line.strip()
+    
+    i = 0
+    while i < len(lines):
+        line_strip = lines[i].strip()
         if not line_strip:
+            i += 1
             continue
         line_lower = line_strip.lower()
         
         # Section detection
         if ("eligibility" in line_lower or "qualification" in line_lower or "pre-qualification" in line_lower) and len(line_strip) < 60:
             current_section = "eligibility"
+            i += 1
             continue
         elif ("documents required" in line_lower or "document required" in line_lower or "checklist" in line_lower or "documents list" in line_lower or "bid documents" in line_lower) and len(line_strip) < 60:
             current_section = "documents"
+            i += 1
             continue
         elif ("tender overview" in line_lower or "tender documents" in line_lower or "previous/similar result" in line_lower or "list of bidders" in line_lower or "disclaimer" in line_lower or "about authority" in line_lower or "about organization" in line_lower or "project background" in line_lower) and len(line_strip) < 60:
             current_section = None
+            i += 1
+            continue
+            
+        # General skip for lone ':' lines
+        if line_strip == ":":
+            i += 1
+            continue
+            
+        # Skip metadata blocks (label, colon, value)
+        is_metadata = False
+        for key in metadata_keys:
+            if line_lower.startswith(key) and len(line_strip) < 40:
+                is_metadata = True
+                break
+                
+        if is_metadata:
+            i += 1
+            # Skip optional following colon
+            if i < len(lines) and lines[i].strip() == ":":
+                i += 1
+            # Skip value line
+            if i < len(lines):
+                i += 1
             continue
             
         if current_section == "eligibility":
             if "ai generated tender summary" in line_lower or "bid / no bid decision" in line_lower or "summary" == line_lower:
+                i += 1
                 continue
             eligibility_lines.append(line_strip)
         elif current_section == "documents":
             clean_doc = re.sub(r'^[-*\*•\d\.\s\)\(]+', '', line_strip).strip()
             if clean_doc:
                 documents_lines.append(clean_doc)
+        
+        i += 1
+        
     eligibility_text = "\n".join(eligibility_lines).strip()
     return eligibility_text, documents_lines
 

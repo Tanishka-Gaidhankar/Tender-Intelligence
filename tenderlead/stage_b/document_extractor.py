@@ -94,13 +94,14 @@ def extract_tender_intelligence(
 
     if has_pre_extracted:
         system_prompt = (
-            "You are an expert analyst reading official Indian government tender documents "
+            "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
             "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
             "From the provided tender document text, extract ONLY the scope of work (physical work required, key work items, quantities, location).\n"
+            "Format the scope of work as a clear, point-wise / bulleted list of physical work items for better understanding.\n"
             "Do NOT extract qualification criteria or document checklists as those are already pre-scraped.\n\n"
             "Respond ONLY in valid JSON with these exact keys:\n"
             "{\n"
-            '  "scope_of_work": "Concise description of the physical work required.",\n'
+            '  "scope_of_work": "Point-wise / bulleted list of physical work items, quantities, and location.",\n'
             '  "qualification_criteria": "",\n'
             '  "documents_required_for_bid": [],\n'
             '  "extraction_confidence": "high or medium or low",\n'
@@ -109,14 +110,15 @@ def extract_tender_intelligence(
         )
     else:
         system_prompt = (
-            "You are an expert analyst reading official Indian government tender documents "
+            "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
             "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
             "From the provided tender document text, extract EXACTLY the following three items. "
-            "Be precise. Extract only what is explicitly stated in the documents.\n\n"
+            "Be precise. Extract only what is explicitly stated in the documents.\n"
+            "Format the scope of work and qualification criteria as clear, point-wise / bulleted lists for better understanding.\n\n"
             "Respond ONLY in valid JSON with these exact keys:\n"
             "{\n"
-            '  "scope_of_work": "Concise description of the physical work required. Include key work items, quantities, and location if mentioned.",\n'
-            '  "qualification_criteria": "All pre-qualification / eligibility requirements: minimum annual turnover, similar work experience (value, duration, type), class of contractor, certifications, registrations, etc. List each requirement separately.",\n'
+            '  "scope_of_work": "Point-wise / bulleted list of physical work items, quantities, and location.",\n'
+            '  "qualification_criteria": "Point-wise list of all pre-qualification / eligibility requirements: minimum annual turnover, similar work experience, class of contractor, certifications, registrations, etc.",\n'
             '  "documents_required_for_bid": [\n'
             '    "Earnest Money Deposit (EMD) receipt",\n'
             '    "Company registration certificate",\n'

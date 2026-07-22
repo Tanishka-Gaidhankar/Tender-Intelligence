@@ -247,30 +247,29 @@ def collect_tender247_document_urls(page, detail_url: str) -> list[dict]:
             except Exception as se:
                 print(f"  Failed to resolve fresh URL via search: {se}")
 
-        # Expand the "Tender Documents" accordion/tab
-        tender_docs_selectors = [
-            "#nitdocuments",
-            "text=Tender Documents",
-            "a:has-text('Tender Documents')",
-            "button:has-text('Tender Documents')",
-            "li:has-text('Tender Documents')",
-            "span:has-text('Tender Documents')",
-        ]
+        # Expand the "Tender Documents" accordion/tab if not already visible
+        is_expanded = page.locator("text=Download All Documents").count() > 0 and page.locator("text=Download All Documents").first.is_visible()
+        
+        if not is_expanded:
+            tender_docs_selectors = [
+                "#nitdocuments",
+                "text=Tender Documents",
+                "a:has-text('Tender Documents')",
+                "button:has-text('Tender Documents')",
+                "li:has-text('Tender Documents')",
+                "span:has-text('Tender Documents')",
+            ]
 
-        try:
-            for selector in tender_docs_selectors:
-                el = page.locator(selector).first
-                if el.is_visible():
-                    print(f"  Clicking 'Tender Documents' tab/element using selector: {selector}")
-                    expanded = el.get_attribute("aria-expanded")
-                    if expanded == "true":
-                        print("  Accordion already open.")
-                    else:
+            try:
+                for selector in tender_docs_selectors:
+                    el = page.locator(selector).first
+                    if el.is_visible():
+                        print(f"  Clicking 'Tender Documents' tab/element using selector: {selector}")
                         el.click()
-                        page.wait_for_timeout(2000)
-                    break
-        except Exception as e:
-            print(f"  Could not click 'Tender Documents' tab: {e}")
+                        page.wait_for_timeout(3000)
+                        break
+            except Exception as e:
+                print(f"  Could not click 'Tender Documents' tab: {e}")
 
         # Wait for download links/content to render
         page.wait_for_timeout(3000)

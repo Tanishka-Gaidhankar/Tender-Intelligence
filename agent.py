@@ -213,6 +213,7 @@ def run_stage2_docs(tenders, source):
     try:
         from tenderlead.stage_b.document_classifier import classify_all_documents
         from tenderlead.stage_b.document_extractor import extract_tender_intelligence
+        from tenderlead.stage_b.pipeline_stage_b import extract_ai_summary_from_current_page, parse_ec_and_dc_from_ai_summary
 
         for t in tenders:
             tender_id = t["tender_id"]
@@ -224,12 +225,30 @@ def run_stage2_docs(tenders, source):
             else:
                 doc_links = collect_tender247_document_urls(page, link)
 
+            pre_eligibility = ""
+            pre_docs = None
+            if source_clean == "Tender247":
+                try:
+                    print("  Extracting AI Summary / Eligibility block directly from current page...")
+                    summary_text = extract_ai_summary_from_current_page(page)
+                    if summary_text:
+                        pre_eligibility, pre_docs = parse_ec_and_dc_from_ai_summary(summary_text)
+                        print(f"  Successfully extracted Eligibility (length: {len(pre_eligibility)}) and Document Checklist ({len(pre_docs)} items)")
+                except Exception as e:
+                    print(f"  Warning: failed to extract Tender247 AI Summary: {e}")
+
             dl_results = []
             if doc_links:
                 dl_results = download_tender_documents(tender_id, doc_links, source_clean)
 
             classified = classify_all_documents(dl_results)
-            intel = extract_tender_intelligence(classified, tender_title=title, tender_id=tender_id)
+            intel = extract_tender_intelligence(
+                classified, 
+                tender_title=title, 
+                tender_id=tender_id,
+                pre_extracted_eligibility=pre_eligibility,
+                pre_extracted_documents=pre_docs
+            )
 
             paths = [r["local_path"] for r in dl_results if r.get("local_path") and os.path.exists(r["local_path"])]
 

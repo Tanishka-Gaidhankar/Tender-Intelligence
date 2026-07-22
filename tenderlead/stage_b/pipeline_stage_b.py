@@ -377,8 +377,92 @@ def run_stage_b(days_back: int = 2):
 # Decoupled Scraper & AI Extractors
 # ---------------------------------------------------------------------------
 
-def save_scraped_documents_metadata(tender_id: str, doc_links: list[dict]):
-    """Saves the scraped document metadata to tender_leads and raw_tender_feed (status: 'scraped')."""
+def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
+    """
+    Parses Eligibility Criteria (EC) and Document Checklist (DC) from Tender247's AI summary text.
+    """
+    if not text:
+        return "", []
+        
+    lines = text.split("\n")
+    eligibility_lines = []
+    documents_lines = []
+    
+    current_section = None
+    for line in lines:
+        line_strip = line.strip()
+        if not line_strip:
+            continue
+        line_lower = line_strip.lower()
+        
+        # Section detection
+        if ("eligibility" in line_lower or "qualification" in line_lower or "pre-qualification" in line_lower) and len(line_strip) < 60:
+            current_section = "eligibility"
+            continue
+        elif ("documents required" in line_lower or "document required" in line_lower or "checklist" in line_lower or "documents list" in line_lower or "bid documents" in line_lower) and len(line_strip) < 60:
+            current_section = "documents"
+            continue
+        elif ("tender id" in line_lower or "scope of work" in line_lower or "about authority" in line_lower or "about organization" in line_lower or "project background" in line_lower) and len(line_strip) < 60:
+            current_section = None
+            continue
+            
+        if current_section == "eligibility":
+            eligibility_lines.append(line_strip)
+        elif current_section == "documents":
+            clean_doc = re.sub(r'^[-*\*•\d\.\s\)\(]+', '', line_strip).strip()
+            if clean_doc:
+                documents_lines.append(clean_doc)
+                
+    eligibility_text = "\n".join(eligibility_lines).strip()
+    return eligibility_text, documents_lines
+
+
+def extract_ai_summary_from_current_page(page) -> str | None:
+    """
+    Reads the AI summary text directly from an already open Playwright detail page.
+    """
+    try:
+        header_selector = "h2:has-text('AI Generated Tender Summary')"
+        if page.locator(header_selector).count() == 0:
+            header_selector = "text=AI Generated Tender Summary"
+        
+        if page.locator(header_selector).count() > 0:
+            header_loc = page.locator(header_selector).first
+            
+            # Click Summary tab if present
+            summary_tab = page.locator("button:has-text('Summary'), a:has-text('Summary')")
+            if summary_tab.count() > 0 and summary_tab.first.is_visible():
+                print("  Clicking 'Summary' tab in AI summary card...")
+                summary_tab.first.click()
+                page.wait_for_timeout(1000)
+
+            # Expand card if collapsed
+            if page.locator("text=Tender Id").count() == 0 or not page.locator("text=Tender Id").first.is_visible():
+                header_loc.click()
+                page.wait_for_timeout(1000)
+            
+            # Check for generate button
+            generate_btn = page.locator("button:has-text('Generate')")
+            if generate_btn.count() == 0:
+                generate_btn = page.locator("text=Generate")
+            if generate_btn.count() > 0 and generate_btn.first.is_visible():
+                generate_btn.first.click()
+                page.wait_for_timeout(3500)
+            
+            parent_loc = header_loc.locator("xpath=..")
+            return parent_loc.inner_text().strip()
+    except Exception as e:
+        print(f"  Error reading AI summary card text: {e}")
+    return None
+
+
+def save_scraped_documents_metadata(
+    tender_id: str, 
+    doc_links: list[dict],
+    eligibility: str = "",
+    documents_checklist: list[str] = None
+):
+    """Saves the scraped document metadata and pre-extracted portal fields to tender_leads and raw_tender_feed."""
     conn = sqlite3.connect(os.path.abspath(DB_FILE))
     cursor = conn.cursor()
 
@@ -413,6 +497,8 @@ def save_scraped_documents_metadata(tender_id: str, doc_links: list[dict]):
     # Ensure stage_b columns are initialized
     _init_stage_b_columns()
 
+    db_docs = json.dumps(documents_checklist or [], ensure_ascii=False) if documents_checklist else None
+
     # Update tender_leads if the record exists
     cursor.execute("SELECT tender_id FROM tender_leads WHERE tender_id = ?", (tender_id,))
     if cursor.fetchone():
@@ -420,10 +506,14 @@ def save_scraped_documents_metadata(tender_id: str, doc_links: list[dict]):
             UPDATE tender_leads SET
                 stage_b_status           = 'scraped',
                 stage_b_source_documents = ?,
+                stage_b_qualification    = COALESCE(?, stage_b_qualification),
+                stage_b_bid_documents    = COALESCE(?, stage_b_bid_documents),
                 stage_b_ran_at           = ?
             WHERE tender_id = ?
         """, (
             json.dumps(source_docs, ensure_ascii=False),
+            eligibility or None,
+            db_docs,
             now,
             tender_id,
         ))
@@ -439,11 +529,11 @@ def save_scraped_documents_metadata(tender_id: str, doc_links: list[dict]):
             cursor.execute("""
                 INSERT INTO tender_leads (
                     tender_id, source, title, authority, location, estimated_value, emd, due_date, source_link, 
-                    created_at, stage_b_status, stage_b_source_documents, stage_b_ran_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped', ?, ?)
+                    created_at, stage_b_status, stage_b_source_documents, stage_b_qualification, stage_b_bid_documents, stage_b_ran_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped', ?, ?, ?, ?)
             """, (
                 tender_id, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-                now, json.dumps(source_docs, ensure_ascii=False), now
+                now, json.dumps(source_docs, ensure_ascii=False), eligibility or None, db_docs, now
             ))
 
     # Update raw_tender_feed stage_b_status
@@ -467,7 +557,7 @@ def scrape_tender_documents_only(
 ) -> list[dict]:
     """
     Crawls, collects document links, downloads them (including zip extraction),
-    and saves the document metadata in the DB as 'scraped' state.
+    pre-scrapes portal AI summary, and saves the document metadata in the DB as 'scraped' state.
     """
     print(f"\n  --- Scrape Documents Only: {tender_id} ({source}) ---")
     
@@ -475,7 +565,7 @@ def scrape_tender_documents_only(
         print("  ERROR: Playwright page required but not provided.")
         return []
 
-    # Step 1: Collect document URLs
+    # Step 1: Collect document URLs (resolves detail URL internally if truncated)
     print(f"  Step 1: Collecting document URLs from {source}...")
     if source == "TenderDetail":
         doc_links = collect_tenderdetail_document_urls(playwright_page, detail_url)
@@ -488,12 +578,25 @@ def scrape_tender_documents_only(
 
     print(f"  Found {len(doc_links)} document link(s)")
 
+    # Pre-scrape Tender247 AI Summary from current page
+    eligibility = ""
+    documents_checklist = []
+    if source == "Tender247":
+        try:
+            print("  Extracting AI Summary / Eligibility block directly from current page...")
+            summary_text = extract_ai_summary_from_current_page(playwright_page)
+            if summary_text:
+                eligibility, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
+                print(f"  Successfully extracted Eligibility (length: {len(eligibility)}) and Document Checklist ({len(documents_checklist)} items) from Tender247 portal details.")
+        except Exception as e:
+            print(f"  Warning: failed to extract Tender247 AI Summary: {e}")
+
     # Step 2: Download documents
     print(f"  Step 2: Downloading {len(doc_links)} document(s)...")
     downloaded = download_tender_documents(tender_id, doc_links, source=source)
 
-    # Step 3: Save scraped documents metadata to DB
-    save_scraped_documents_metadata(tender_id, downloaded)
+    # Step 3: Save scraped documents metadata and pre-extracted portal fields to DB
+    save_scraped_documents_metadata(tender_id, downloaded, eligibility=eligibility, documents_checklist=documents_checklist)
 
     return downloaded
 
@@ -509,7 +612,7 @@ def extract_tender_details_via_ai(tender_id: str, title: str) -> dict:
     conn = sqlite3.connect(os.path.abspath(DB_FILE))
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT stage_b_source_documents FROM tender_leads WHERE tender_id = ?", (tender_id,))
+    cursor.execute("SELECT stage_b_source_documents, stage_b_qualification, stage_b_bid_documents FROM tender_leads WHERE tender_id = ?", (tender_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -519,6 +622,14 @@ def extract_tender_details_via_ai(tender_id: str, title: str) -> dict:
             "stage_b_status": "failed",
             "notes": "No scraped documents found in DB. Run scraper first."
         }
+
+    pre_eligibility = row["stage_b_qualification"] or ""
+    pre_docs = None
+    if row["stage_b_bid_documents"]:
+        try:
+            pre_docs = json.loads(row["stage_b_bid_documents"])
+        except Exception:
+            pass
         
     source_docs = json.loads(row["stage_b_source_documents"])
     all_docs = source_docs.get("all_docs", [])
@@ -547,8 +658,8 @@ def extract_tender_details_via_ai(tender_id: str, title: str) -> dict:
     readable_count = sum(1 for d in classified if not d.get("skipped") and not d.get("is_scanned"))
     print(f"  {readable_count}/{len(classified)} document(s) are readable")
     
-    if readable_count == 0:
-        print("  No readable documents. Stage B extraction cannot proceed.")
+    if readable_count == 0 and not pre_eligibility:
+        print("  No readable documents and no pre-scraped eligibility criteria. Stage B extraction cannot proceed.")
         results = {
             "stage_b_status": "failed",
             "notes": "All documents are either scanned PDFs or failed to download.",
@@ -562,12 +673,20 @@ def extract_tender_details_via_ai(tender_id: str, title: str) -> dict:
 
     # Step 4: Extract intelligence
     print(f"  Extracting scope, qualification, and bid document requirements...")
-    results = extract_tender_intelligence(classified, title, tender_id)
+    results = extract_tender_intelligence(
+        classified, 
+        title, 
+        tender_id, 
+        pre_extracted_eligibility=pre_eligibility, 
+        pre_extracted_documents=pre_docs
+    )
     
     # Save results
-    results["stage_b_status"] = "completed"
+    if results.get("stage_b_status") != "failed":
+        results["stage_b_status"] = "completed"
     _save_stage_b_results(tender_id, results, downloaded)
     
     return results
+
 
 

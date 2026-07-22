@@ -57,13 +57,17 @@ def extract_tender_intelligence(
     classified_docs: list[dict],
     tender_title: str,
     tender_id: str = "",
+    pre_extracted_eligibility: str = "",
+    pre_extracted_documents: list[str] = None
 ) -> dict:
+    has_pre_extracted = bool(pre_extracted_eligibility or pre_extracted_documents)
+
     empty_result = {
         "scope_of_work": f"Tender Scope: {tender_title}",
         "scope_source_documents": [],
-        "qualification_criteria": "Standard technical and financial eligibility criteria apply. Minimum turnover and past experience in similar civil works required.",
-        "qualification_source_documents": [],
-        "documents_required_for_bid": [
+        "qualification_criteria": pre_extracted_eligibility or "Standard technical and financial eligibility criteria apply. Minimum turnover and past experience in similar civil works required.",
+        "qualification_source_documents": ["Portal AI Summary"] if pre_extracted_eligibility else [],
+        "documents_required_for_bid": pre_extracted_documents or [
             "Earnest Money Deposit (EMD) receipt / BG",
             "Company / Firm Registration Certificate",
             "GST Registration & Latest Return",
@@ -71,9 +75,9 @@ def extract_tender_intelligence(
             "Technical Experience / Work Completion Certificates",
             "Financial Audited Statements / Turnover Certificate"
         ],
-        "bid_docs_source_documents": [],
-        "extraction_confidence": "low",
-        "notes": "Extracted with standard baseline template.",
+        "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents is not None else [],
+        "extraction_confidence": "high" if has_pre_extracted else "low",
+        "notes": "Extracted using portal summary fields." if has_pre_extracted else "Extracted with standard baseline template.",
         "stage_b_status": "success",
     }
 
@@ -88,30 +92,46 @@ def extract_tender_intelligence(
     if not combined_text or len(combined_text.strip()) < 50:
         return empty_result
 
-    system_prompt = (
-        "You are an expert analyst reading official Indian government tender documents "
-        "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
-        "From the provided tender document text, extract EXACTLY the following three items. "
-        "Be precise. Extract only what is explicitly stated in the documents.\n\n"
-        "Respond ONLY in valid JSON with these exact keys:\n"
-        "{\n"
-        '  "scope_of_work": "Concise description of the physical work required. Include key work items, quantities, and location if mentioned.",\n'
-        '  "qualification_criteria": "All pre-qualification / eligibility requirements: minimum annual turnover, similar work experience (value, duration, type), class of contractor, certifications, registrations, etc. List each requirement separately.",\n'
-        '  "documents_required_for_bid": [\n'
-        '    "Earnest Money Deposit (EMD) receipt",\n'
-        '    "Company registration certificate",\n'
-        '    "Experience certificates for similar works in last 7 years"\n'
-        "  ],\n"
-        '  "extraction_confidence": "high or medium or low",\n'
-        '  "notes": "Any caveats, missing sections, or ambiguities found"\n'
-        "}"
-    )
+    if has_pre_extracted:
+        system_prompt = (
+            "You are an expert analyst reading official Indian government tender documents "
+            "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
+            "From the provided tender document text, extract ONLY the scope of work (physical work required, key work items, quantities, location).\n"
+            "Do NOT extract qualification criteria or document checklists as those are already pre-scraped.\n\n"
+            "Respond ONLY in valid JSON with these exact keys:\n"
+            "{\n"
+            '  "scope_of_work": "Concise description of the physical work required.",\n'
+            '  "qualification_criteria": "",\n'
+            '  "documents_required_for_bid": [],\n'
+            '  "extraction_confidence": "high or medium or low",\n'
+            '  "notes": "Any caveats, missing sections, or ambiguities found in scope"\n'
+            "}"
+        )
+    else:
+        system_prompt = (
+            "You are an expert analyst reading official Indian government tender documents "
+            "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
+            "From the provided tender document text, extract EXACTLY the following three items. "
+            "Be precise. Extract only what is explicitly stated in the documents.\n\n"
+            "Respond ONLY in valid JSON with these exact keys:\n"
+            "{\n"
+            '  "scope_of_work": "Concise description of the physical work required. Include key work items, quantities, and location if mentioned.",\n'
+            '  "qualification_criteria": "All pre-qualification / eligibility requirements: minimum annual turnover, similar work experience (value, duration, type), class of contractor, certifications, registrations, etc. List each requirement separately.",\n'
+            '  "documents_required_for_bid": [\n'
+            '    "Earnest Money Deposit (EMD) receipt",\n'
+            '    "Company registration certificate",\n'
+            '    "Experience certificates for similar works in last 7 years"\n'
+            "  ],\n"
+            '  "extraction_confidence": "high or medium or low",\n'
+            '  "notes": "Any caveats, missing sections, or ambiguities found"\n'
+            "}"
+        )
 
     user_prompt = (
         f"Tender Title: {tender_title}\n"
         f"Tender ID: {tender_id}\n\n"
         f"--- TENDER DOCUMENT TEXT ---\n{combined_text}\n--- END OF DOCUMENTS ---\n\n"
-        "Extract the three fields as JSON."
+        "Extract the fields as JSON."
     )
 
     try:
@@ -126,22 +146,46 @@ def extract_tender_intelligence(
                     json_str = match.group(0)
             parsed = json.loads(json_str)
 
-            bid_docs = parsed.get("documents_required_for_bid", [])
+            # Normalize scope_of_work to string
+            scope_sow = parsed.get("scope_of_work", "")
+            if isinstance(scope_sow, list):
+                scope_sow = "\n".join(str(item) for item in scope_sow)
+            elif not isinstance(scope_sow, str):
+                scope_sow = str(scope_sow) if scope_sow is not None else ""
+
+            # Qualification criteria
+            qual_criteria = pre_extracted_eligibility if pre_extracted_eligibility else parsed.get("qualification_criteria", "")
+            if isinstance(qual_criteria, list):
+                qual_criteria = "\n".join(str(item) for item in qual_criteria)
+            elif not isinstance(qual_criteria, str):
+                qual_criteria = str(qual_criteria) if qual_criteria is not None else ""
+
+            # Documents checklist
+            bid_docs = pre_extracted_documents if pre_extracted_documents is not None else parsed.get("documents_required_for_bid", [])
             if isinstance(bid_docs, str):
                 bid_docs = [line.strip() for line in bid_docs.split("\n") if line.strip()]
+            elif isinstance(bid_docs, list):
+                bid_docs = [str(item).strip() for item in bid_docs if item]
+            else:
+                bid_docs = [str(bid_docs)] if bid_docs is not None else []
+
+            notes = parsed.get("notes", "Extraction complete.")
+            if has_pre_extracted:
+                notes = (notes + " (Eligibility and Bid Documents parsed directly from Portal AI Summary).").strip()
 
             return {
-                "scope_of_work": parsed.get("scope_of_work") or empty_result["scope_of_work"],
+                "scope_of_work": scope_sow or empty_result["scope_of_work"],
                 "scope_source_documents": source_names,
-                "qualification_criteria": parsed.get("qualification_criteria") or empty_result["qualification_criteria"],
-                "qualification_source_documents": source_names,
+                "qualification_criteria": qual_criteria or empty_result["qualification_criteria"],
+                "qualification_source_documents": ["Portal AI Summary"] if pre_extracted_eligibility else source_names,
                 "documents_required_for_bid": bid_docs or empty_result["documents_required_for_bid"],
-                "bid_docs_source_documents": source_names,
-                "extraction_confidence": parsed.get("extraction_confidence", "high"),
-                "notes": parsed.get("notes", "Extraction complete."),
-                "stage_b_status": "success",
+                "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents is not None else source_names,
+                "extraction_confidence": parsed.get("extraction_confidence", "high" if has_pre_extracted else "medium"),
+                "notes": notes,
+                "stage_b_status": "success" if scope_sow else "partial",
             }
     except Exception as e:
         print(f"Extraction error: {e}")
 
     return empty_result
+

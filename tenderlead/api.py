@@ -331,6 +331,23 @@ def calculate_statistics_direct(parent_doc):
     parent_doc.save(ignore_permissions=True)
     frappe.db.commit()
 
+def resolve_portal_id_and_link(t_id):
+    """Resolves actual numeric portal ID (e.g. 102511145) and tender link from a given t_id (docname or portal ID)."""
+    portal_id = t_id
+    link_val = None
+    if t_id:
+        if frappe.db.exists("Raw Tender Lead", t_id):
+            lead = frappe.get_doc("Raw Tender Lead", t_id)
+            portal_id = lead.tender_id or t_id
+            link_val = lead.link
+        else:
+            lead_name = frappe.db.get_value("Raw Tender Lead", {"tender_id": t_id}, "name")
+            if lead_name:
+                lead = frappe.get_doc("Raw Tender Lead", lead_name)
+                portal_id = t_id
+                link_val = lead.link
+    return portal_id, link_val
+
 @frappe.whitelist()
 def trigger_stage2_scan(docname=None, tender_id=None):
     """
@@ -341,13 +358,15 @@ def trigger_stage2_scan(docname=None, tender_id=None):
 
     if tender_id:
         # Single tender trigger from child table row
-        lead_doc = frappe.get_doc("Raw Tender Lead", tender_id) if frappe.db.exists("Raw Tender Lead", tender_id) else None
-        link_val = lead_doc.link if lead_doc else None
+        p_id, link_val = resolve_portal_id_and_link(tender_id)
+        lead_doc = frappe.get_doc("Raw Tender Lead", {"tender_id": p_id}) if frappe.db.exists("Raw Tender Lead", {"tender_id": p_id}) else None
+        if not lead_doc and frappe.db.exists("Raw Tender Lead", tender_id):
+            lead_doc = frappe.get_doc("Raw Tender Lead", tender_id)
         source_val = lead_doc.source if lead_doc else "Tender247"
         title_val = lead_doc.title if lead_doc else tender_id
 
         tenders_to_scrape.append({
-            "tender_id": tender_id,
+            "tender_id": p_id,
             "link": link_val,
             "source": source_val,
             "title": title_val
@@ -360,9 +379,10 @@ def trigger_stage2_scan(docname=None, tender_id=None):
             t_id = getattr(row, "tender_id", None) or getattr(row, "tender_id_1", None)
             lead_status = frappe.db.get_value("Raw Tender Lead", t_id, "status") if t_id else getattr(row, "status", None)
             if lead_status in ["Good Match", "good_match", "rules_passed", "lead_created"]:
+                p_id, link_val = resolve_portal_id_and_link(t_id)
                 tenders_to_scrape.append({
-                    "tender_id": t_id,
-                    "link": getattr(row, "link", None) or getattr(row, "url", None),
+                    "tender_id": p_id,
+                    "link": link_val or getattr(row, "link", None) or getattr(row, "url", None),
                     "source": getattr(row, "source", "Tender247"),
                     "title": getattr(row, "title", t_id)
                 })
@@ -372,31 +392,41 @@ def trigger_stage2_scan(docname=None, tender_id=None):
 
     # Immediately instantiate/ensure Tender Secondary Screening record exists in ERPNext Desk
     for t in tenders_to_scrape:
-        t_id = t.get("tender_id")
-        if t_id:
+        p_id = t.get("tender_id")
+        if p_id:
             try:
                 meta = frappe.get_meta("Tender Secondary Screening")
                 fields = {f.fieldname for f in meta.fields}
-                if frappe.db.exists("Tender Secondary Screening", {"tender_id": t_id}):
-                    sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": t_id})
+                if frappe.db.exists("Tender Secondary Screening", {"tender_id": p_id}):
+                    sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": p_id})
+                elif frappe.db.exists("Tender Secondary Screening", {"tender_id_1": p_id}):
+                    sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id_1": p_id})
                 elif frappe.db.exists("Tender Secondary Screening", {"tender_title": t.get("title")}):
                     sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_title": t.get("title")})
                 else:
                     sec_doc = frappe.new_doc("Tender Secondary Screening")
                 
+                _, link_val = resolve_portal_id_and_link(p_id)
+
                 for f_name, f_val in [
-                    ("tender_id", t_id),
-                    ("tender_id_1", t_id),
+                    ("tender_id", p_id),
+                    ("tender_id_1", p_id),
                     ("tender_title", t.get("title")),
                     ("title", t.get("title")),
-                    ("source", t.get("source"))
+                    ("source", t.get("source")),
+                    ("link", link_val or t.get("link")),
+                    ("url", link_val or t.get("link")),
+                    ("tender_link", link_val or t.get("link")),
+                    ("tender_url", link_val or t.get("link")),
+                    ("source_link", link_val or t.get("link")),
+                    ("view_tender_url", link_val or t.get("link"))
                 ]:
                     if f_name in fields and f_val:
                         sec_doc.set(f_name, f_val)
                 sec_doc.save(ignore_permissions=True)
                 frappe.db.commit()
             except Exception as e:
-                frappe.log_error(f"Error initializing Tender Secondary Screening for {t_id}: {e}")
+                frappe.log_error(f"Error initializing Tender Secondary Screening for {p_id}: {e}")
 
     payload_data = {
         "docname": docname,
@@ -458,7 +488,12 @@ def ingest_stage2_documents(job_id=None, tender_id=None, docname=None, results_j
                 results = results_json
 
         t_id = tender_id or results.get("tender_id")
-        lead_doc = frappe.get_doc("Raw Tender Lead", t_id) if t_id and frappe.db.exists("Raw Tender Lead", t_id) else None
+        p_id, link_val = resolve_portal_id_and_link(t_id)
+
+        lead_doc = frappe.get_doc("Raw Tender Lead", {"tender_id": p_id}) if frappe.db.exists("Raw Tender Lead", {"tender_id": p_id}) else None
+        if not lead_doc and t_id and frappe.db.exists("Raw Tender Lead", t_id):
+            lead_doc = frappe.get_doc("Raw Tender Lead", t_id)
+
         title_val = (lead_doc.title if lead_doc else None) or results.get("title") or t_id or "Unknown Tender"
         source_val = (lead_doc.source if lead_doc else None) or results.get("source") or "Tender247"
 
@@ -473,8 +508,10 @@ def ingest_stage2_documents(job_id=None, tender_id=None, docname=None, results_j
 
         # Create or update Tender Secondary Screening document in ERPNext
         sec_doc = None
-        if t_id and frappe.db.exists("Tender Secondary Screening", {"tender_id": t_id}):
-            sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": t_id})
+        if p_id and frappe.db.exists("Tender Secondary Screening", {"tender_id": p_id}):
+            sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id": p_id})
+        elif p_id and frappe.db.exists("Tender Secondary Screening", {"tender_id_1": p_id}):
+            sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_id_1": p_id})
         elif frappe.db.exists("Tender Secondary Screening", {"tender_title": title_val}):
             sec_doc = frappe.get_doc("Tender Secondary Screening", {"tender_title": title_val})
         else:
@@ -484,8 +521,8 @@ def ingest_stage2_documents(job_id=None, tender_id=None, docname=None, results_j
         fields = {f.fieldname for f in meta.fields}
 
         field_mappings = [
-            ("tender_id", t_id),
-            ("tender_id_1", t_id),
+            ("tender_id", p_id),
+            ("tender_id_1", p_id),
             ("source", source_val),
             ("tender_title", title_val),
             ("title", title_val),
@@ -494,7 +531,13 @@ def ingest_stage2_documents(job_id=None, tender_id=None, docname=None, results_j
             ("eligibility_criteria", qualification_val),
             ("document_checklist", checklist_str),
             ("checklist", checklist_str),
-            ("documents_required_for_bid", checklist_str)
+            ("documents_required_for_bid", checklist_str),
+            ("link", link_val),
+            ("url", link_val),
+            ("tender_link", link_val),
+            ("tender_url", link_val),
+            ("source_link", link_val),
+            ("view_tender_url", link_val)
         ]
         for fieldname, value in field_mappings:
             if fieldname in fields and value:

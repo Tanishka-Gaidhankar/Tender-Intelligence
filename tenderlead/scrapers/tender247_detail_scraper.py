@@ -43,52 +43,55 @@ def fetch_tender247_detail_summary(page: Page, detail_url: str, timeout_sec: int
         
         # Check if the content is collapsed (visible text check)
         is_expanded = False
-        for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "button:has-text('Summary')"]:
-            loc = page.locator(text_selector)
-            if loc.count() > 0 and loc.first.is_visible():
-                is_expanded = True
-                break
+        for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "text=Summary"]:
+            button_loc = header_loc.locator("xpath=..")
+            h3_loc = button_loc.locator("xpath=..")
+            content_loc = h3_loc.locator("xpath=./following-sibling::div[1]")
+            
+            if content_loc.count() > 0:
+                loc = content_loc.locator(text_selector)
+                if loc.count() > 0 and loc.first.is_visible():
+                    is_expanded = True
+                    break
         
         if not is_expanded:
             print("AI Summary block appears collapsed. Clicking header to expand...")
             header_loc.click()
             page.wait_for_timeout(2000)
 
-        # Click Summary tab if present
-        summary_tab = page.locator("button:has-text('Summary'), a:has-text('Summary')")
-        if summary_tab.count() > 0 and summary_tab.first.is_visible():
-            print("Clicking 'Summary' tab in AI summary card...")
-            summary_tab.first.click()
-            page.wait_for_timeout(1500)
+        # Get the content sibling of the H3 (grandparent of the H2 header)
+        button_loc = header_loc.locator("xpath=..")
+        h3_loc = button_loc.locator("xpath=..")
+        content_loc = h3_loc.locator("xpath=./following-sibling::div[1]")
 
-        # Check if the summary is already generated, or if a "Generate" button exists
-        generate_btn = page.locator("button:has-text('Generate')")
-        if generate_btn.count() == 0:
-            generate_btn = page.locator("text=Generate")
+        if content_loc.count() > 0:
+            # Click Summary tab if present inside the content panel
+            summary_tab = content_loc.locator("text=Summary")
+            if summary_tab.count() > 0 and summary_tab.first.is_visible():
+                print("Clicking 'Summary' tab in AI summary card...")
+                summary_tab.first.click()
+                page.wait_for_timeout(1500)
 
-        if generate_btn.count() > 0 and generate_btn.first.is_visible():
-            print("Clicking 'Generate' button to produce AI summary...")
-            generate_btn.first.click()
-            # Wait for generation (typically 3-5 seconds, wait up to timeout_sec)
-            print(f"Waiting up to {timeout_sec} seconds for generation...")
-            for _ in range(timeout_sec):
-                page.wait_for_timeout(1000)
-                # Break if some expected text is visible
-                if page.locator("text=Checklist").count() > 0 or page.locator("text=GST").count() > 0 or page.locator("text=Tender Id").count() > 0:
-                    print("AI summary generated successfully!")
-                    break
+            # Check if the summary is already generated, or if a "Generate" button exists
+            generate_btn = content_loc.locator("button:has-text('Generate')")
+            if generate_btn.count() == 0:
+                generate_btn = content_loc.locator("text=Generate")
 
-        # Read the inner text of the container card
-        # The container is the grandparent or parent of the header h2
-        # Let's locate the closest div wrapping both the header and content.
-        # We can use xpath to get the parent of the header.
-        parent_loc = header_loc.locator("xpath=..")
-        
-        # Let's extract the text from the parent
-        summary_text = parent_loc.inner_text()
-        
-        # Clean up any trailing "AI Summary -" or extra headers if needed
-        return summary_text.strip()
+            if generate_btn.count() > 0 and generate_btn.first.is_visible():
+                print("Clicking 'Generate' button to produce AI summary...")
+                generate_btn.first.click()
+                # Wait for generation (typically 3-5 seconds, wait up to timeout_sec)
+                print(f"Waiting up to {timeout_sec} seconds for generation...")
+                for _ in range(timeout_sec):
+                    page.wait_for_timeout(1000)
+                    # Break if some expected text is visible
+                    if content_loc.locator("text=Checklist").count() > 0 or content_loc.locator("text=GST").count() > 0 or content_loc.locator("text=Tender Id").count() > 0:
+                        print("AI summary generated successfully!")
+                        break
+
+            return content_loc.first.inner_text().strip()
+
+        return header_loc.locator("xpath=..").inner_text().strip() # fallback
 
     except Exception as e:
         print(f"Error scraping Tender247 detail page: {e}")

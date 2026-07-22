@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -416,7 +417,6 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
             clean_doc = re.sub(r'^[-*\*•\d\.\s\)\(]+', '', line_strip).strip()
             if clean_doc:
                 documents_lines.append(clean_doc)
-                
     eligibility_text = "\n".join(eligibility_lines).strip()
     return eligibility_text, documents_lines
 
@@ -435,45 +435,50 @@ def extract_ai_summary_from_current_page(page) -> str | None:
             
             # Check if card is expanded
             is_expanded = False
-            for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "button:has-text('Summary')"]:
-                loc = page.locator(text_selector)
-                if loc.count() > 0 and loc.first.is_visible():
-                    is_expanded = True
-                    break
+            for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "text=Summary"]:
+                button_loc = header_loc.locator("xpath=..")
+                h3_loc = button_loc.locator("xpath=..")
+                content_loc = h3_loc.locator("xpath=./following-sibling::div[1]")
+                
+                if content_loc.count() > 0:
+                    loc = content_loc.locator(text_selector)
+                    if loc.count() > 0 and loc.first.is_visible():
+                        is_expanded = True
+                        break
             
             if not is_expanded:
                 print("  AI Summary block appears collapsed. Clicking header to expand...")
                 header_loc.click()
                 page.wait_for_timeout(2000)
             
-            # Click Summary tab if present
-            summary_tab = page.locator("button:has-text('Summary'), a:has-text('Summary')")
-            if summary_tab.count() > 0 and summary_tab.first.is_visible():
-                print("  Clicking 'Summary' tab in AI summary card...")
-                summary_tab.first.click()
-                page.wait_for_timeout(1500)
-            
-            # Check for generate button
-            generate_btn = page.locator("button:has-text('Generate')")
-            if generate_btn.count() == 0:
-                generate_btn = page.locator("text=Generate")
-            if generate_btn.count() > 0 and generate_btn.first.is_visible():
-                print("  AI summary not yet generated. Clicking 'Generate'...")
-                generate_btn.first.click()
-                page.wait_for_timeout(4000)
-            
             # Get the content sibling of the H3 (grandparent of the H2 header)
             button_loc = header_loc.locator("xpath=..")
             h3_loc = button_loc.locator("xpath=..")
             content_loc = h3_loc.locator("xpath=./following-sibling::div[1]")
+            
             if content_loc.count() > 0:
+                # Click Summary tab if present inside the content panel
+                summary_tab = content_loc.locator("text=Summary")
+                if summary_tab.count() > 0 and summary_tab.first.is_visible():
+                    print("  Clicking 'Summary' tab in AI summary card...")
+                    summary_tab.first.click()
+                    page.wait_for_timeout(1500)
+                
+                # Check for generate button
+                generate_btn = content_loc.locator("button:has-text('Generate')")
+                if generate_btn.count() == 0:
+                    generate_btn = content_loc.locator("text=Generate")
+                if generate_btn.count() > 0 and generate_btn.first.is_visible():
+                    print("  AI summary not yet generated. Clicking 'Generate'...")
+                    generate_btn.first.click()
+                    page.wait_for_timeout(4000)
+                
                 return content_loc.first.inner_text().strip()
                 
             return header_loc.locator("xpath=..").inner_text().strip() # fallback
     except Exception as e:
         print(f"  Error reading AI summary card text: {e}")
     return None
-
 
 
 def save_scraped_documents_metadata(

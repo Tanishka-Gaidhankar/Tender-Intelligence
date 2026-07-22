@@ -388,7 +388,9 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
     eligibility_lines = []
     documents_lines = []
     
-    current_section = None
+    # Start as "eligibility" so that general summary details/pre-qualification parameters
+    # at the top are correctly captured.
+    current_section = "eligibility"
     for line in lines:
         line_strip = line.strip()
         if not line_strip:
@@ -402,11 +404,13 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
         elif ("documents required" in line_lower or "document required" in line_lower or "checklist" in line_lower or "documents list" in line_lower or "bid documents" in line_lower) and len(line_strip) < 60:
             current_section = "documents"
             continue
-        elif ("tender id" in line_lower or "scope of work" in line_lower or "about authority" in line_lower or "about organization" in line_lower or "project background" in line_lower) and len(line_strip) < 60:
+        elif ("tender overview" in line_lower or "tender documents" in line_lower or "previous/similar result" in line_lower or "list of bidders" in line_lower or "disclaimer" in line_lower or "about authority" in line_lower or "about organization" in line_lower or "project background" in line_lower) and len(line_strip) < 60:
             current_section = None
             continue
             
         if current_section == "eligibility":
+            if "ai generated tender summary" in line_lower or "bid / no bid decision" in line_lower or "summary" == line_lower:
+                continue
             eligibility_lines.append(line_strip)
         elif current_section == "documents":
             clean_doc = re.sub(r'^[-*\*•\d\.\s\)\(]+', '', line_strip).strip()
@@ -429,31 +433,47 @@ def extract_ai_summary_from_current_page(page) -> str | None:
         if page.locator(header_selector).count() > 0:
             header_loc = page.locator(header_selector).first
             
+            # Check if card is expanded
+            is_expanded = False
+            for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "button:has-text('Summary')"]:
+                loc = page.locator(text_selector)
+                if loc.count() > 0 and loc.first.is_visible():
+                    is_expanded = True
+                    break
+            
+            if not is_expanded:
+                print("  AI Summary block appears collapsed. Clicking header to expand...")
+                header_loc.click()
+                page.wait_for_timeout(2000)
+            
             # Click Summary tab if present
             summary_tab = page.locator("button:has-text('Summary'), a:has-text('Summary')")
             if summary_tab.count() > 0 and summary_tab.first.is_visible():
                 print("  Clicking 'Summary' tab in AI summary card...")
                 summary_tab.first.click()
-                page.wait_for_timeout(1000)
-
-            # Expand card if collapsed
-            if page.locator("text=Tender Id").count() == 0 or not page.locator("text=Tender Id").first.is_visible():
-                header_loc.click()
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(1500)
             
             # Check for generate button
             generate_btn = page.locator("button:has-text('Generate')")
             if generate_btn.count() == 0:
                 generate_btn = page.locator("text=Generate")
             if generate_btn.count() > 0 and generate_btn.first.is_visible():
+                print("  AI summary not yet generated. Clicking 'Generate'...")
                 generate_btn.first.click()
-                page.wait_for_timeout(3500)
+                page.wait_for_timeout(4000)
             
-            parent_loc = header_loc.locator("xpath=..")
-            return parent_loc.inner_text().strip()
+            # Get the content sibling of the H3 (grandparent of the H2 header)
+            button_loc = header_loc.locator("xpath=..")
+            h3_loc = button_loc.locator("xpath=..")
+            content_loc = h3_loc.locator("xpath=./following-sibling::div[1]")
+            if content_loc.count() > 0:
+                return content_loc.first.inner_text().strip()
+                
+            return header_loc.locator("xpath=..").inner_text().strip() # fallback
     except Exception as e:
         print(f"  Error reading AI summary card text: {e}")
     return None
+
 
 
 def save_scraped_documents_metadata(

@@ -42,11 +42,24 @@ def fetch_tender247_detail_summary(page: Page, detail_url: str, timeout_sec: int
         header_loc = page.locator(header_selector).first
         
         # Check if the content is collapsed (visible text check)
-        # If "Tender Id" text is not visible, we should click the header to expand it
-        if page.locator("text=Tender Id").count() == 0 or not page.locator("text=Tender Id").first.is_visible():
+        is_expanded = False
+        for text_selector in ["text=Tender Id", "text=Checklist", "text=Generate", "text=GST", "text=Material", "button:has-text('Summary')"]:
+            loc = page.locator(text_selector)
+            if loc.count() > 0 and loc.first.is_visible():
+                is_expanded = True
+                break
+        
+        if not is_expanded:
             print("AI Summary block appears collapsed. Clicking header to expand...")
             header_loc.click()
             page.wait_for_timeout(2000)
+
+        # Click Summary tab if present
+        summary_tab = page.locator("button:has-text('Summary'), a:has-text('Summary')")
+        if summary_tab.count() > 0 and summary_tab.first.is_visible():
+            print("Clicking 'Summary' tab in AI summary card...")
+            summary_tab.first.click()
+            page.wait_for_timeout(1500)
 
         # Check if the summary is already generated, or if a "Generate" button exists
         generate_btn = page.locator("button:has-text('Generate')")
@@ -60,7 +73,8 @@ def fetch_tender247_detail_summary(page: Page, detail_url: str, timeout_sec: int
             print(f"Waiting up to {timeout_sec} seconds for generation...")
             for _ in range(timeout_sec):
                 page.wait_for_timeout(1000)
-                if page.locator("text=Tender Id").count() > 0 and page.locator("text=Tender Id").first.is_visible():
+                # Break if some expected text is visible
+                if page.locator("text=Checklist").count() > 0 or page.locator("text=GST").count() > 0 or page.locator("text=Tender Id").count() > 0:
                     print("AI summary generated successfully!")
                     break
 

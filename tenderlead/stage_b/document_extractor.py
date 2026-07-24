@@ -214,7 +214,7 @@ def extract_tender_intelligence(
             # AI classification: separate embedded document checklist items from qualification criteria
             try:
                 from .pipeline_stage_b import parse_ec_and_dc_from_ai_summary
-                clean_qual, extra_docs = parse_ec_and_dc_from_ai_summary(qual_criteria)
+                _, clean_qual, extra_docs = parse_ec_and_dc_from_ai_summary(qual_criteria)
                 if clean_qual:
                     qual_criteria = clean_qual
                 if extra_docs:

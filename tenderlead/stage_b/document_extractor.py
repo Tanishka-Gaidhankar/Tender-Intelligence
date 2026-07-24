@@ -6,8 +6,8 @@ from .document_classifier import (
     extract_full_text,
 )
 
-MAX_CHARS_PER_DOC = 8000
-MAX_TOTAL_CHARS = 20000
+MAX_CHARS_PER_DOC = 16000
+MAX_TOTAL_CHARS = 35000
 
 
 def _select_relevant_docs(classified_docs: list[dict]) -> dict[str, list[dict]]:
@@ -23,7 +23,7 @@ def _select_relevant_docs(classified_docs: list[dict]) -> dict[str, list[dict]]:
     }
 
 
-def _extract_work_relevant_text(full_text: str, max_chars: int = 8000) -> str:
+def _extract_work_relevant_text(full_text: str, max_chars: int = 16000) -> str:
     """Extracts text, prioritizing sections describing work to be performed, project work, TOR, BOQ, specs."""
     if len(full_text) <= max_chars:
         return full_text
@@ -33,7 +33,11 @@ def _extract_work_relevant_text(full_text: str, max_chars: int = 8000) -> str:
         "scope of work", "project work", "expected work", "work to be done",
         "work to be performed", "nature of work", "description of work",
         "terms of reference", "technical specification", "schedule of requirement",
-        "bill of quantities", "boq", "deliverables", "duties of contractor"
+        "bill of quantities", "boq", "deliverables", "duties of contractor",
+        "name of work", "details of work", "broad scope", "item description",
+        "short description", "schedule a", "schedule b", "item no", "construction of",
+        "supply of", "installation of", "commissioning of", "civil works", "piping work",
+        "road work", "bridge work", "building work"
     ]
 
     import re

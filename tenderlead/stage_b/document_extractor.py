@@ -125,55 +125,27 @@ def extract_tender_intelligence(
     if not combined_text or len(combined_text.strip()) < 50:
         return empty_result
 
-    if has_pre_extracted:
-        system_prompt = (
-            "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
-            "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
-            "Analyze the provided tender document text carefully to identify the Scope of Work — the actual work, physical tasks, services, or deliverables to be performed.\n"
-            "IMPORTANT: The document section may NOT be literally titled 'Scope of Work'. Look for any section or text describing the work to be executed under synonyms such as:\n"
-            "- 'Project Work' / 'Expected Work to be Done' / 'Work to be Performed'\n"
-            "- 'Nature of Work' / 'Description of Work' / 'Brief Description of Work'\n"
-            "- 'Terms of Reference (TOR)' / 'Technical Specifications' / 'Execution Plan'\n"
-            "- 'Schedule of Requirements' / 'Bill of Quantities (BOQ)' / 'Deliverables & Milestones'\n"
-            "- 'Services Required' / 'Duties and Responsibilities of Contractor'\n\n"
-            "If ANY of these sections or descriptions exist in the document text:\n"
-            "- Extract all physical tasks, activities, quantities, site locations, and expected deliverables.\n"
-            "- Format the scope of work as a clear, point-wise / bulleted list.\n"
-            "Do NOT extract qualification criteria or document checklists as those are already pre-scraped.\n\n"
-            "ONLY if NO section or description of the work to be performed exists anywhere in the provided document text:\n"
-            "- Set 'scope_of_work' to: 'Scope of work is not mentioned in the downloaded tender documents.'\n"
-            "- Do NOT simply copy or repeat the tender title.\n\n"
-            "Respond ONLY in valid JSON with these exact keys:\n"
-            "{\n"
-            '  "scope_of_work": "Point-wise list of physical work items/tasks to be performed, or \'Scope of work is not mentioned in the downloaded tender documents.\'",\n'
-            '  "qualification_criteria": "",\n'
-            '  "documents_required_for_bid": [],\n'
-            '  "extraction_confidence": "high or medium or low",\n'
-            '  "notes": "Any caveats, missing sections, or ambiguities found in scope"\n'
-            "}"
-        )
-    else:
-        system_prompt = (
-            "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
-            "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
-            "Analyze the provided tender document text carefully to extract EXACTLY the following three items.\n"
-            "1. Scope of Work: Extract the work to be performed, physical tasks, deliverables, quantities, and location from the document text.\n"
-            "   IMPORTANT: Look for sections titled 'Scope of Work', 'Project Work', 'Expected Work to be Done', 'Work to be Performed', 'Nature of Work', 'Terms of Reference (TOR)', 'Technical Specifications', 'Schedule of Requirements', or 'BOQ Items'.\n"
-            "   Format as a point-wise list. ONLY if NO work description of any kind is specified in the text, set it to: 'Scope of work is not mentioned in the downloaded tender documents.' Do NOT repeat the tender title.\n"
-            "2. Qualification Criteria: Point-wise list of pre-qualification / eligibility requirements.\n"
-            "3. Documents Required for Bid: List of required bid submission documents.\n\n"
-            "Respond ONLY in valid JSON with these exact keys:\n"
-            "{\n"
-            '  "scope_of_work": "Point-wise list of physical work items/tasks to be performed, or \'Scope of work is not mentioned in the downloaded tender documents.\'",\n'
-            '  "qualification_criteria": "Point-wise list of all pre-qualification / eligibility requirements.",\n'
-            '  "documents_required_for_bid": [\n'
-            '    "Earnest Money Deposit (EMD) receipt",\n'
-            '    "Company registration certificate"\n'
-            '  ],\n'
-            '  "extraction_confidence": "high or medium or low",\n'
-            '  "notes": "Any caveats, missing sections, or ambiguities found"\n'
-            "}"
-        )
+    system_prompt = (
+        "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
+        "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
+        "Analyze the provided tender document text carefully to extract EXACTLY the following three items:\n\n"
+        "1. Scope of Work: Extract the work to be performed, physical tasks, deliverables, quantities, and location from the document text.\n"
+        "   IMPORTANT: Look for sections titled 'Scope of Work', 'Project Work', 'Expected Work to be Done', 'Work to be Performed', 'Nature of Work', 'Terms of Reference (TOR)', 'Technical Specifications', 'Schedule of Requirements', or 'BOQ Items'.\n"
+        "   Format as a point-wise list. ONLY if NO work description of any kind is specified in the text, set it to: 'Scope of work is not mentioned in the downloaded tender documents.' Do NOT repeat the tender title.\n\n"
+        "2. Qualification Criteria: Point-wise list of all pre-qualification / eligibility requirements (minimum annual turnover, similar work experience, class of contractor, certifications, key personnel, equipment capacity).\n\n"
+        "3. Documents Required for Bid: Point-wise list of required bid submission documents (registration certificate, PAN card, affidavit, ITR, GST, EMD receipt, experience certificates, balance sheets).\n\n"
+        "Respond ONLY in valid JSON with these exact keys:\n"
+        "{\n"
+        '  "scope_of_work": "Point-wise list of physical work items/tasks to be performed, or \'Scope of work is not mentioned in the downloaded tender documents.\'",\n'
+        '  "qualification_criteria": "Point-wise list of all pre-qualification / eligibility requirements.",\n'
+        '  "documents_required_for_bid": [\n'
+        '    "Earnest Money Deposit (EMD) receipt",\n'
+        '    "Company registration certificate"\n'
+        '  ],\n'
+        '  "extraction_confidence": "high or medium or low",\n'
+        '  "notes": "Any caveats, missing sections, or ambiguities found"\n'
+        "}"
+    )
 
     user_prompt = (
         f"Tender Title: {tender_title}\n"
@@ -201,25 +173,43 @@ def extract_tender_intelligence(
             elif not isinstance(scope_sow, str):
                 scope_sow = str(scope_sow) if scope_sow is not None else ""
 
-            # Check if scope_sow was just returning tender title or empty
-            if not scope_sow or tender_title.lower() in scope_sow.lower() and len(scope_sow) < len(tender_title) + 30:
+            # Use pre-extracted scope if available, or fallback to document-extracted SOW
+            if pre_extracted_scope and "not mentioned" not in pre_extracted_scope.lower():
+                scope_sow = pre_extracted_scope
+            elif not scope_sow or (tender_title.lower() in scope_sow.lower() and len(scope_sow) < len(tender_title) + 30):
                 scope_sow = "Scope of work is not mentioned in the downloaded tender documents."
 
-            # Qualification criteria
-            qual_criteria = pre_extracted_eligibility if pre_extracted_eligibility else parsed.get("qualification_criteria", "")
-            if isinstance(qual_criteria, list):
-                qual_criteria = "\n".join(str(item) for item in qual_criteria)
-            elif not isinstance(qual_criteria, str):
-                qual_criteria = str(qual_criteria) if qual_criteria is not None else ""
+            # Qualification criteria: use document-extracted if pre-extracted is missing/short
+            doc_qual = parsed.get("qualification_criteria", "")
+            if isinstance(doc_qual, list):
+                doc_qual = "\n".join(str(item) for item in doc_qual)
+            elif not isinstance(doc_qual, str):
+                doc_qual = str(doc_qual) if doc_qual is not None else ""
 
-            # Documents checklist
-            bid_docs = pre_extracted_documents if pre_extracted_documents is not None else parsed.get("documents_required_for_bid", [])
-            if isinstance(bid_docs, str):
-                bid_docs = [line.strip() for line in bid_docs.split("\n") if line.strip()]
-            elif isinstance(bid_docs, list):
-                bid_docs = [str(item).strip() for item in bid_docs if item]
+            if pre_extracted_eligibility and len(pre_extracted_eligibility.strip()) > 20:
+                qual_criteria = pre_extracted_eligibility
+                # Merge additional criteria from document if available
+                if doc_qual and doc_qual.strip() and doc_qual.lower() not in qual_criteria.lower():
+                    qual_criteria = qual_criteria + "\n\nAdditional criteria from documents:\n" + doc_qual
             else:
-                bid_docs = [str(bid_docs)] if bid_docs is not None else []
+                qual_criteria = doc_qual or "Eligibility criteria is not specified in the downloaded tender documents."
+
+            # Documents checklist: use document-extracted if pre-extracted is missing/empty
+            doc_bid_docs = parsed.get("documents_required_for_bid", [])
+            if isinstance(doc_bid_docs, str):
+                doc_bid_docs = [line.strip() for line in doc_bid_docs.split("\n") if line.strip()]
+            elif isinstance(doc_bid_docs, list):
+                doc_bid_docs = [str(item).strip() for item in doc_bid_docs if item]
+            else:
+                doc_bid_docs = [str(doc_bid_docs)] if doc_bid_docs is not None else []
+
+            if pre_extracted_documents and len(pre_extracted_documents) > 0:
+                bid_docs = list(pre_extracted_documents)
+                for d in doc_bid_docs:
+                    if d and d not in bid_docs:
+                        bid_docs.append(d)
+            else:
+                bid_docs = doc_bid_docs
 
             # AI classification: separate embedded document checklist items from qualification criteria
             try:
@@ -229,22 +219,22 @@ def extract_tender_intelligence(
                     qual_criteria = clean_qual
                 if extra_docs:
                     for d in extra_docs:
-                        if d not in bid_docs:
+                        if d and d not in bid_docs:
                             bid_docs.append(d)
             except Exception as classify_err:
                 print(f"Warning: failed to classify embedded checklist: {classify_err}")
 
             notes = parsed.get("notes", "Extraction complete.")
             if has_pre_extracted:
-                notes = (notes + " (Eligibility and Bid Documents parsed directly from Portal AI Summary).").strip()
+                notes = (notes + " (Portal AI Summary merged with document extraction).").strip()
 
             return {
                 "scope_of_work": scope_sow,
-                "scope_source_documents": source_names,
+                "scope_source_documents": ["Portal AI Summary"] if pre_extracted_scope else source_names,
                 "qualification_criteria": qual_criteria or empty_result["qualification_criteria"],
                 "qualification_source_documents": ["Portal AI Summary"] if pre_extracted_eligibility else source_names,
-                "documents_required_for_bid": bid_docs or empty_result["documents_required_for_bid"],
-                "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents is not None else source_names,
+                "documents_required_for_bid": bid_docs,
+                "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents else source_names,
                 "extraction_confidence": parsed.get("extraction_confidence", "high" if has_pre_extracted else "medium"),
                 "notes": notes,
                 "stage_b_status": "success" if scope_sow and "not mentioned" not in scope_sow.lower() else "partial",

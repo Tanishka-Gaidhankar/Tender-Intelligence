@@ -181,6 +181,8 @@ def save_tender_lead(
         ON CONFLICT(tender_id) DO UPDATE SET
             ai_score=excluded.ai_score,
             ai_rationale=excluded.ai_rationale,
+            scope_of_work=COALESCE(excluded.scope_of_work, tender_leads.scope_of_work),
+            stage_b_scope=COALESCE(excluded.scope_of_work, tender_leads.stage_b_scope),
             stage_b_qualification=COALESCE(tender_leads.stage_b_qualification, excluded.stage_b_qualification),
             stage_b_bid_documents=COALESCE(tender_leads.stage_b_bid_documents, excluded.stage_b_bid_documents)
     """, (
@@ -653,23 +655,24 @@ def run_stage2():
             # 4. Fetch detail details
             save_raw_feed(tender, source, "unsure")
             
+            scope_of_work = None
             eligibility_criteria = None
             documents_checklist = []
             
             if source == "Tender247" and page:
                 try:
-                    print(f"    Fetching AI Summary / Eligibility block directly from Tender247 details page: {link}...")
+                    print(f"    Fetching AI Summary / Scope & Eligibility block directly from Tender247 details page: {link}...")
                     summary_text = fetch_tender247_detail_summary(page, link)
                     if summary_text:
                         from .stage_b.pipeline_stage_b import parse_ec_and_dc_from_ai_summary
-                        eligibility_criteria, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
-                        print(f"    Successfully pre-extracted eligibility ({len(eligibility_criteria)} chars) and documents checklist ({len(documents_checklist)} items).")
+                        scope_of_work, eligibility_criteria, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
+                        print(f"    Successfully pre-extracted scope of work ({len(scope_of_work)} chars), eligibility ({len(eligibility_criteria)} chars), and documents checklist ({len(documents_checklist)} items).")
                 except Exception as e:
                     print(f"    Warning: failed to extract Tender247 AI Summary during intake: {e}")
 
             # Keep these for score_tender context
             tender["eligibility_criteria"] = eligibility_criteria
-            tender["scope_of_work"] = None
+            tender["scope_of_work"] = scope_of_work or tender.get("scope_of_work")
                     
             # 5. Stage 2 Scoring
             score_results = score_tender(tender, settings)

@@ -223,6 +223,19 @@ def extract_tender_intelligence(
             else:
                 bid_docs = [str(bid_docs)] if bid_docs is not None else []
 
+            # AI classification: separate embedded document checklist items from qualification criteria
+            try:
+                from .pipeline_stage_b import parse_ec_and_dc_from_ai_summary
+                clean_qual, extra_docs = parse_ec_and_dc_from_ai_summary(qual_criteria)
+                if clean_qual:
+                    qual_criteria = clean_qual
+                if extra_docs:
+                    for d in extra_docs:
+                        if d not in bid_docs:
+                            bid_docs.append(d)
+            except Exception as classify_err:
+                print(f"Warning: failed to classify embedded checklist: {classify_err}")
+
             notes = parsed.get("notes", "Extraction complete.")
             if has_pre_extracted:
                 notes = (notes + " (Eligibility and Bid Documents parsed directly from Portal AI Summary).").strip()

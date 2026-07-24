@@ -380,18 +380,20 @@ def run_stage_b(days_back: int = 2):
 # Decoupled Scraper & AI Extractors
 # ---------------------------------------------------------------------------
 
-def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
+def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, str, list[str]]:
     """
-    Parses Eligibility Criteria (EC) and Document Checklist (DC) from Tender247's AI summary text,
-    filtering out top-level vertical metadata (e.g. Tender Id, GEM Bid number, dates).
+    Parses Scope of Work (SOW), Eligibility Criteria (EC), and Document Checklist (DC) from Tender247's AI summary text,
+    filtering out top-level vertical metadata and intelligently separating document checklist items 
+    embedded inside eligibility criteria text.
     """
     if not text:
-        return "", []
-        
+        return "", "", []
+
     lines = text.split("\n")
-    eligibility_lines = []
+    scope_raw_lines = []
+    eligibility_raw_lines = []
     documents_lines = []
-    
+
     metadata_keys = [
         "tender id", "gem bid number", "bid end date", "bid opening date", 
         "bid offer validity", "ministry state name", "department name", 
@@ -403,9 +405,35 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
         "contact address", "contact number", "mse purchase preference", 
         "surety bond", "pre bid meeting date"
     ]
-    
-    current_section = "eligibility"
-    
+
+    scope_header_keywords = [
+        "tender overview", "scope of work", "project overview", "nature of requirement", 
+        "project background", "brief description", "work description", "work overview"
+    ]
+
+    doc_header_keywords = [
+        "mandatory information/documents", "documents for bidders", "documents to be submitted", 
+        "document checklist", "documents required", "list of documents", "certificates required", 
+        "documents to be uploaded", "submission of documents", "enclosures"
+    ]
+
+    doc_item_keywords = [
+        "registration card", "registration certificate", "copy of pan", "pan card",
+        "affidavit", "attested by notary", "magistrate", "profit and loss",
+        "balance sheet", "itr", "income tax return", "tax return", "gst registration",
+        "earnest money deposit", "emd receipt", "bank guarantee", "experience certificate",
+        "completion certificate", "work order copy", "undertaking", "declaration",
+        "non-blacklisting", "litigation affidavit", "power of attorney", "partnership deed",
+        "msme certificate", "udyam registration", "audited financial statement",
+        "solvency certificate", "turnover certificate", "copy of", "upload copy"
+    ]
+
+    qual_header_keywords = [
+        "key personnel", "key plant", "equipment", "financial turnover",
+        "technical capacity", "past experience", "similar work", "turnover criteria"
+    ]
+
+    current_section = None
     i = 0
     while i < len(lines):
         line_strip = lines[i].strip()
@@ -413,9 +441,13 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
             i += 1
             continue
         line_lower = line_strip.lower()
-        
+
         # Section detection
-        if ("eligibility" in line_lower or "qualification" in line_lower or "pre-qualification" in line_lower) and len(line_strip) < 60:
+        if any(sh in line_lower for sh in scope_header_keywords) and len(line_strip) < 60:
+            current_section = "scope"
+            i += 1
+            continue
+        elif ("eligibility" in line_lower or "qualification" in line_lower or "pre-qualification" in line_lower) and len(line_strip) < 60:
             current_section = "eligibility"
             i += 1
             continue
@@ -423,47 +455,81 @@ def parse_ec_and_dc_from_ai_summary(text: str) -> tuple[str, list[str]]:
             current_section = "documents"
             i += 1
             continue
-        elif ("tender overview" in line_lower or "tender documents" in line_lower or "previous/similar result" in line_lower or "list of bidders" in line_lower or "disclaimer" in line_lower or "about authority" in line_lower or "about organization" in line_lower or "project background" in line_lower) and len(line_strip) < 60:
+        elif ("previous/similar result" in line_lower or "list of bidders" in line_lower or "disclaimer" in line_lower or "about authority" in line_lower or "about organization" in line_lower) and len(line_strip) < 60:
             current_section = None
             i += 1
             continue
-            
-        # General skip for lone ':' lines
+
         if line_strip == ":":
             i += 1
             continue
-            
-        # Skip metadata blocks (label, colon, value)
+
+        # Skip metadata blocks
         is_metadata = False
         for key in metadata_keys:
             if line_lower.startswith(key) and len(line_strip) < 40:
                 is_metadata = True
                 break
-                
+
         if is_metadata:
             i += 1
-            # Skip optional following colon
             if i < len(lines) and lines[i].strip() == ":":
                 i += 1
-            # Skip value line
             if i < len(lines):
                 i += 1
             continue
-            
-        if current_section == "eligibility":
+
+        if current_section == "scope":
+            if not line_lower.startswith("ai generated") and not line_lower.startswith("summary"):
+                scope_raw_lines.append(line_strip)
+        elif current_section == "eligibility":
             if "ai generated tender summary" in line_lower or "bid / no bid decision" in line_lower or "summary" == line_lower:
                 i += 1
                 continue
-            eligibility_lines.append(line_strip)
+            eligibility_raw_lines.append(line_strip)
         elif current_section == "documents":
             clean_doc = re.sub(r'^[-*\*•\d\.\s\)\(]+', '', line_strip).strip()
             if clean_doc:
                 documents_lines.append(clean_doc)
-        
+
         i += 1
-        
-    eligibility_text = "\n".join(eligibility_lines).strip()
-    return eligibility_text, documents_lines
+
+    # Intelligent separation of embedded checklist items from raw eligibility lines
+    clean_eligibility_lines = []
+    in_embedded_doc_block = False
+    current_affidavit = None
+
+    for line in eligibility_raw_lines:
+        clean = re.sub(r'^[•\-\*\d+\.\)]\s*', '', line).strip()
+        clean_lower = clean.lower()
+
+        # Check for embedded document headers
+        if any(dh in clean_lower for dh in doc_header_keywords):
+            in_embedded_doc_block = True
+            continue
+        elif any(qh in clean_lower for qh in qual_header_keywords) and not any(dk in clean_lower for dk in doc_item_keywords):
+            in_embedded_doc_block = False
+
+        is_doc = in_embedded_doc_block or any(dk in clean_lower for dk in doc_item_keywords)
+
+        if is_doc:
+            if "affidavit" in clean_lower and ("specifying" in clean_lower or "attested" in clean_lower):
+                current_affidavit = clean
+                documents_lines.append(current_affidavit)
+            elif current_affidavit and (clean_lower.startswith("the bidder") or clean_lower.startswith("all submitted") or "date on the affidavit" in clean_lower):
+                # Attach affidavit sub-clauses
+                documents_lines[-1] += " (" + clean + ")"
+            else:
+                current_affidavit = None
+                if clean and clean not in documents_lines:
+                    documents_lines.append(clean)
+        else:
+            current_affidavit = None
+            clean_eligibility_lines.append(line)
+
+    scope_text = "\n".join(scope_raw_lines).strip()
+    eligibility_text = "\n".join(clean_eligibility_lines).strip()
+    return scope_text, eligibility_text, documents_lines
 
 
 def extract_ai_summary_from_current_page(page) -> str | None:
@@ -529,6 +595,7 @@ def extract_ai_summary_from_current_page(page) -> str | None:
 def save_scraped_documents_metadata(
     tender_id: str, 
     doc_links: list[dict],
+    scope: str = "",
     eligibility: str = "",
     documents_checklist: list[str] = None
 ):
@@ -574,6 +641,8 @@ def save_scraped_documents_metadata(
     if cursor.fetchone():
         cursor.execute("""
             UPDATE tender_leads SET
+                scope_of_work            = COALESCE(NULLIF(?, ''), scope_of_work),
+                stage_b_scope            = COALESCE(NULLIF(?, ''), stage_b_scope),
                 stage_b_status           = 'scraped',
                 stage_b_source_documents = ?,
                 stage_b_qualification    = COALESCE(?, stage_b_qualification),
@@ -581,6 +650,8 @@ def save_scraped_documents_metadata(
                 stage_b_ran_at           = ?
             WHERE tender_id = ?
         """, (
+            scope or None,
+            scope or None,
             json.dumps(source_docs, ensure_ascii=False),
             eligibility or None,
             db_docs,
@@ -598,12 +669,12 @@ def save_scraped_documents_metadata(
         if r:
             cursor.execute("""
                 INSERT INTO tender_leads (
-                    tender_id, source, title, authority, location, estimated_value, emd, due_date, source_link, 
-                    created_at, stage_b_status, stage_b_source_documents, stage_b_qualification, stage_b_bid_documents, stage_b_ran_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped', ?, ?, ?, ?)
+                    tender_id, source, title, authority, location, estimated_value, emd, due_date, scope_of_work, source_link, 
+                    created_at, stage_b_status, stage_b_source_documents, stage_b_scope, stage_b_qualification, stage_b_bid_documents, stage_b_ran_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped', ?, ?, ?, ?, ?)
             """, (
-                tender_id, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-                now, json.dumps(source_docs, ensure_ascii=False), eligibility or None, db_docs, now
+                tender_id, r[0], r[1], r[2], r[3], r[4], r[5], r[6], scope or r[1], r[7],
+                now, json.dumps(source_docs, ensure_ascii=False), scope or None, eligibility or None, db_docs, now
             ))
 
     # Update raw_tender_feed stage_b_status
@@ -649,15 +720,16 @@ def scrape_tender_documents_only(
     print(f"  Found {len(doc_links)} document link(s)")
 
     # Pre-scrape Tender247 AI Summary from current page
+    scope_of_work = ""
     eligibility = ""
     documents_checklist = []
     if source == "Tender247":
         try:
-            print("  Extracting AI Summary / Eligibility block directly from current page...")
+            print("  Extracting AI Summary / Scope & Eligibility block directly from current page...")
             summary_text = extract_ai_summary_from_current_page(playwright_page)
             if summary_text:
-                eligibility, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
-                print(f"  Successfully extracted Eligibility (length: {len(eligibility)}) and Document Checklist ({len(documents_checklist)} items) from Tender247 portal details.")
+                scope_of_work, eligibility, documents_checklist = parse_ec_and_dc_from_ai_summary(summary_text)
+                print(f"  Successfully extracted Scope of Work ({len(scope_of_work)} chars), Eligibility ({len(eligibility)} chars), and Document Checklist ({len(documents_checklist)} items) from Tender247 portal details.")
         except Exception as e:
             print(f"  Warning: failed to extract Tender247 AI Summary: {e}")
 
@@ -666,7 +738,7 @@ def scrape_tender_documents_only(
     downloaded = download_tender_documents(tender_id, doc_links, source=source)
 
     # Step 3: Save scraped documents metadata and pre-extracted portal fields to DB
-    save_scraped_documents_metadata(tender_id, downloaded, eligibility=eligibility, documents_checklist=documents_checklist)
+    save_scraped_documents_metadata(tender_id, downloaded, scope=scope_of_work, eligibility=eligibility, documents_checklist=documents_checklist)
 
     return downloaded
 

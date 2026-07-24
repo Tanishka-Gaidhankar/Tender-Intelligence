@@ -172,14 +172,16 @@ def fetch_tenderdetail_detail(detail_url: str) -> dict | None:
                 scope_parts.append(f"  {item['sl_no']}. {item['title']} - {item['description']}")
         scope_of_work = "\n".join(scope_parts)
 
-        # Look for explicit eligibility fields
-        eligibility_fields = []
+        # Look for explicit eligibility and qualification criteria fields
+        eligibility_kv = []
+        target_keys = ["eligibility", "qualification", "completion period", "category", "estimated cost", "document fees", "financial bid", "pre bid"]
         for k, v in details.items():
-            if "eligibility" in k.lower() or "qualification" in k.lower():
-                eligibility_fields.append(f"{k}: {v}")
+            if any(tk in k.lower() for tk in target_keys):
+                eligibility_kv.append((k, v))
                 
-        if eligibility_fields:
-            eligibility_criteria = "\n".join(eligibility_fields)
+        if eligibility_kv:
+            rows_html = "".join([f"<tr><td style='padding: 8px; font-weight: 600; width: 35%; border: 1px solid rgba(255,255,255,0.1);'>{k}</td><td style='padding: 8px; border: 1px solid rgba(255,255,255,0.1);'>{v}</td></tr>" for k, v in eligibility_kv])
+            eligibility_criteria = f"<table class='eligibility-table' style='width:100%; border-collapse: collapse; border: 1px solid rgba(255,255,255,0.15); margin-top: 8px;'><thead><tr style='background: rgba(255,255,255,0.06);'><th colspan='2' style='padding: 10px; text-align: left; border: 1px solid rgba(255,255,255,0.15); font-weight: 700; color: #fff;'>Qualification / Eligibility Criteria</th></tr></thead><tbody>{rows_html}</tbody></table>"
         else:
             eligibility_criteria = "Refer to Tender Brief and BOQ Items."
 

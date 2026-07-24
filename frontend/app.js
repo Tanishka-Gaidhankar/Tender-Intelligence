@@ -595,7 +595,7 @@ function openDrawer(tender) {
     if (tender.scope_of_work || tender.eligibility) {
         drawerExtractedScopeSection.style.display = 'block';
         drawerExtractedScope.textContent = tender.scope_of_work || 'Not extracted.';
-        drawerExtractedEligibility.textContent = tender.eligibility || 'Not extracted.';
+        drawerExtractedEligibility.innerHTML = formatEligibilityAsTable(tender.eligibility || 'Not extracted.');
     } else {
         drawerExtractedScopeSection.style.display = 'none';
     }
@@ -693,7 +693,103 @@ function extractScoreFromText(text, fallback) {
     }
 
     return fallback;
-}// Helper to format date offset in local timezone YYYY-MM-DD
+}
+
+// Helper to format raw text/bullet eligibility criteria into a structured HTML table
+function formatEligibilityAsTable(text) {
+    if (!text || text === 'Not extracted.') return 'Not extracted.';
+    
+    // If it's already an HTML table or HTML block, return as is
+    if (text.trim().startsWith('<table') || text.includes('<table')) {
+        return text;
+    }
+    
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+    if (lines.length === 0) return text;
+
+    // Check if it is a bulleted / listed criteria format (like Image 1)
+    const isBulletList = lines.some(l => l.startsWith('•') || l.startsWith('-') || l.startsWith('*') || /^\d+[\.\)]/.test(l));
+    
+    if (isBulletList) {
+        const items = lines.map(line => {
+            const cleanLine = line.replace(/^[•\-\*\d+\.\)]\s*/, '');
+            return `<li style="margin-bottom: 8px; line-height: 1.5; color: #e2e8f0;">${cleanLine}</li>`;
+        }).join('');
+        
+        return `
+            <table class="eligibility-table" style="width:100%; border-collapse: collapse; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; overflow: hidden; margin-top: 8px; font-size: 0.85rem;">
+                <thead>
+                    <tr style="background: rgba(255,255,255,0.08);">
+                        <th style="padding: 10px 14px; text-align: left; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.15);">
+                            Eligibility Criteria / Pre-Qualification Criteria (PQ/PQR) / Qualification of the Bidder
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding: 14px 18px; background: rgba(0,0,0,0.2);">
+                            <ul style="padding-left: 18px; margin: 0;">
+                                ${items}
+                            </ul>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        `;
+    }
+
+    // Key-value criteria pairs (like Image 2) -> format into 2-column table
+    const kvPairs = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        if (line.includes(':')) {
+            const idx = line.indexOf(':');
+            const key = line.substring(0, idx).trim();
+            const val = line.substring(idx + 1).trim();
+            if (key && val) {
+                kvPairs.push({ key, val });
+            } else if (key && i + 1 < lines.length && !lines[i+1].includes(':')) {
+                kvPairs.push({ key, val: lines[i+1] });
+                i++;
+            }
+        } else if (i + 1 < lines.length && !lines[i+1].includes(':')) {
+            kvPairs.push({ key: line, val: lines[i+1] });
+            i++;
+        } else {
+            kvPairs.push({ key: 'Criteria', val: line });
+        }
+        i++;
+    }
+
+    if (kvPairs.length > 0) {
+        const rows = kvPairs.map(pair => `
+            <tr>
+                <td style="padding: 8px 12px; font-weight: 600; width: 35%; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); color: #94a3b8; vertical-align: top;">${pair.key}</td>
+                <td style="padding: 8px 12px; border: 1px solid rgba(255,255,255,0.1); color: #f8fafc; vertical-align: top;">${pair.val}</td>
+            </tr>
+        `).join('');
+
+        return `
+            <table class="eligibility-table" style="width:100%; border-collapse: collapse; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; overflow: hidden; margin-top: 8px; font-size: 0.85rem;">
+                <thead>
+                    <tr style="background: rgba(255,255,255,0.08);">
+                        <th colspan="2" style="padding: 10px 14px; text-align: left; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.15);">
+                            Qualification Criteria / Eligibility Table
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        `;
+    }
+
+    return text;
+}
+
+// Helper to format date offset in local timezone YYYY-MM-DD
 function getLocalDateString(offsetDays = 0) {
     const d = new Date();
     d.setDate(d.getDate() - offsetDays);

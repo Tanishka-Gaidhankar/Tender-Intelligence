@@ -147,6 +147,7 @@ def _save_stage_b_results(tender_id: str, results: dict, doc_links: list[dict]):
     if cursor.fetchone():
         cursor.execute("""
             UPDATE tender_leads SET
+                scope_of_work            = COALESCE(NULLIF(?, ''), scope_of_work),
                 stage_b_scope            = ?,
                 stage_b_qualification    = ?,
                 stage_b_bid_documents    = ?,
@@ -157,6 +158,7 @@ def _save_stage_b_results(tender_id: str, results: dict, doc_links: list[dict]):
                 stage_b_ran_at           = ?
             WHERE tender_id = ?
         """, (
+            results.get("scope_of_work", ""),
             results.get("scope_of_work", ""),
             results.get("qualification_criteria", ""),
             json.dumps(results.get("documents_required_for_bid", []), ensure_ascii=False),

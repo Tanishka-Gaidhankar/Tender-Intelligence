@@ -162,7 +162,7 @@ def call_llm(user_prompt: str, system_prompt: str = "", json_mode: bool = False)
             if json_mode:
                 payload["format"] = "json"
 
-            res = requests.post(url, json=payload, timeout=60)
+            res = requests.post(url, json=payload, timeout=180)
             res.raise_for_status()
             res_json = res.json()
             return res_json.get("response", "").strip()

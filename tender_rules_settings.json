@@ -29,10 +29,8 @@
     "staff quarters"
   ],
   "llm": {
-    "provider": "cohere",
-    "api_key": "YOUR_COHERE_API_KEY",
-    "model": "command-r-plus-08-2024",
-    "groq_api_key": "YOUR_GROQ_API_KEY",
+    "provider": "ollama",
+    "model": "llama3.1:latest",
     "temperature": 0.0
   }
 }

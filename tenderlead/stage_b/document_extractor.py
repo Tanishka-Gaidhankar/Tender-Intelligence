@@ -128,7 +128,8 @@ def extract_tender_intelligence(
     system_prompt = (
         "You are a Senior Tender Engineering Analyst reading official Indian government tender documents "
         "for KBP Civil Engineering Services, a civil engineering contractor.\n\n"
-        "Analyze the provided tender document text carefully to extract EXACTLY the following three items:\n\n"
+        "Analyze the provided tender document text carefully to extract EXACTLY the following three items, "
+        "along with exact page-level citations from the text markers (e.g. 'RFP_Notice.pdf (Page 2, Page 15)'):\n\n"
         "1. Scope of Work: Extract the work to be performed, physical tasks, deliverables, quantities, and location from the document text.\n"
         "   IMPORTANT: Look for sections titled 'Scope of Work', 'Project Work', 'Expected Work to be Done', 'Work to be Performed', 'Nature of Work', 'Terms of Reference (TOR)', 'Technical Specifications', 'Schedule of Requirements', or 'BOQ Items'.\n"
         "   Format as a point-wise list. ONLY if NO work description of any kind is specified in the text, set it to: 'Scope of work is not mentioned in the downloaded tender documents.' Do NOT repeat the tender title.\n\n"
@@ -137,11 +138,14 @@ def extract_tender_intelligence(
         "Respond ONLY in valid JSON with these exact keys:\n"
         "{\n"
         '  "scope_of_work": "Point-wise list of physical work items/tasks to be performed, or \'Scope of work is not mentioned in the downloaded tender documents.\'",\n'
+        '  "scope_source_documents": ["filename.pdf (Page X, Page Y)"],\n'
         '  "qualification_criteria": "Point-wise list of all pre-qualification / eligibility requirements.",\n'
+        '  "qualification_source_documents": ["filename.pdf (Page X)"],\n'
         '  "documents_required_for_bid": [\n'
         '    "Earnest Money Deposit (EMD) receipt",\n'
         '    "Company registration certificate"\n'
         '  ],\n'
+        '  "bid_docs_source_documents": ["filename.pdf (Page Z)"],\n'
         '  "extraction_confidence": "high or medium or low",\n'
         '  "notes": "Any caveats, missing sections, or ambiguities found"\n'
         "}"
@@ -228,13 +232,24 @@ def extract_tender_intelligence(
             if has_pre_extracted:
                 notes = (notes + " (Portal AI Summary merged with document extraction).").strip()
 
+            scope_sources = parsed.get("scope_source_documents") or (["Portal AI Summary"] if pre_extracted_scope else source_names)
+            qual_sources = parsed.get("qualification_source_documents") or (["Portal AI Summary"] if pre_extracted_eligibility else source_names)
+            bid_sources = parsed.get("bid_docs_source_documents") or (["Portal AI Summary"] if pre_extracted_documents else source_names)
+
+            if isinstance(scope_sources, str):
+                scope_sources = [scope_sources]
+            if isinstance(qual_sources, str):
+                qual_sources = [qual_sources]
+            if isinstance(bid_sources, str):
+                bid_sources = [bid_sources]
+
             return {
                 "scope_of_work": scope_sow,
-                "scope_source_documents": ["Portal AI Summary"] if pre_extracted_scope else source_names,
+                "scope_source_documents": scope_sources,
                 "qualification_criteria": qual_criteria or empty_result["qualification_criteria"],
-                "qualification_source_documents": ["Portal AI Summary"] if pre_extracted_eligibility else source_names,
+                "qualification_source_documents": qual_sources,
                 "documents_required_for_bid": bid_docs,
-                "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents else source_names,
+                "bid_docs_source_documents": bid_sources,
                 "extraction_confidence": parsed.get("extraction_confidence", "high" if has_pre_extracted else "medium"),
                 "notes": notes,
                 "stage_b_status": "success" if scope_sow and "not mentioned" not in scope_sow.lower() else "partial",

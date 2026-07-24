@@ -36,12 +36,13 @@ def extract_first_pages_text(local_path: str, num_pages: int = SCAN_PAGES) -> tu
             import fitz
             parts = []
             doc = fitz.open(local_path)
+            basename = os.path.basename(local_path)
             max_p = min(len(doc), num_pages)
             for i in range(max_p):
                 page = doc[i]
                 txt = page.get_text("text") or ""
                 if txt.strip():
-                    parts.append(txt)
+                    parts.append(f"--- [Document: {basename} | Page {i+1}] ---\n{txt.strip()}")
 
             text = "\n".join(parts).strip()
             is_scanned = len(text) < 50
@@ -53,7 +54,7 @@ def extract_first_pages_text(local_path: str, num_pages: int = SCAN_PAGES) -> tu
                     blocks = doc[i].get_text("blocks")
                     for b in blocks:
                         if len(b) >= 5 and isinstance(b[4], str) and b[4].strip():
-                            block_text.append(b[4].strip())
+                            block_text.append(f"--- [Document: {basename} | Page {i+1}] ---\n{b[4].strip()}")
                 alt_text = "\n".join(block_text).strip()
                 if len(alt_text) >= 50:
                     text = alt_text
@@ -64,9 +65,12 @@ def extract_first_pages_text(local_path: str, num_pages: int = SCAN_PAGES) -> tu
             try:
                 import pdfplumber
                 parts = []
+                basename = os.path.basename(local_path)
                 with pdfplumber.open(local_path) as pdf:
                     for i, page in enumerate(pdf.pages[:num_pages]):
-                        parts.append(page.extract_text() or "")
+                        txt = page.extract_text() or ""
+                        if txt.strip():
+                            parts.append(f"--- [Document: {basename} | Page {i+1}] ---\n{txt.strip()}")
                 text = "\n".join(parts).strip()
                 return text, len(text) < 50
             except Exception as e2:

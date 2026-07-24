@@ -225,15 +225,16 @@ def run_stage2_docs(tenders, source):
             else:
                 doc_links = collect_tender247_document_urls(page, link)
 
+            pre_sow = ""
             pre_eligibility = ""
             pre_docs = None
             if source_clean == "Tender247":
                 try:
-                    print("  Extracting AI Summary / Eligibility block directly from current page...")
+                    print("  Extracting AI Summary / Scope & Eligibility block directly from current page...")
                     summary_text = extract_ai_summary_from_current_page(page)
                     if summary_text:
-                        pre_eligibility, pre_docs = parse_ec_and_dc_from_ai_summary(summary_text)
-                        print(f"  Successfully extracted Eligibility (length: {len(pre_eligibility)}) and Document Checklist ({len(pre_docs)} items)")
+                        pre_sow, pre_eligibility, pre_docs = parse_ec_and_dc_from_ai_summary(summary_text)
+                        print(f"  Successfully extracted Scope ({len(pre_sow)} chars), Eligibility ({len(pre_eligibility)} chars), and Document Checklist ({len(pre_docs) if pre_docs else 0} items)")
                 except Exception as e:
                     print(f"  Warning: failed to extract Tender247 AI Summary: {e}")
 
@@ -246,6 +247,7 @@ def run_stage2_docs(tenders, source):
                 classified, 
                 tender_title=title, 
                 tender_id=tender_id,
+                pre_extracted_scope=pre_sow,
                 pre_extracted_eligibility=pre_eligibility,
                 pre_extracted_documents=pre_docs
             )

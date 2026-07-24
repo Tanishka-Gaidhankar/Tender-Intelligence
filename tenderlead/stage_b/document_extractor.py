@@ -92,24 +92,18 @@ def extract_tender_intelligence(
     classified_docs: list[dict],
     tender_title: str,
     tender_id: str = "",
+    pre_extracted_scope: str = "",
     pre_extracted_eligibility: str = "",
     pre_extracted_documents: list[str] = None
 ) -> dict:
-    has_pre_extracted = bool(pre_extracted_eligibility or pre_extracted_documents)
+    has_pre_extracted = bool(pre_extracted_scope or pre_extracted_eligibility or pre_extracted_documents)
 
     empty_result = {
-        "scope_of_work": "Scope of work is not mentioned in the downloaded tender documents.",
-        "scope_source_documents": [],
-        "qualification_criteria": pre_extracted_eligibility or "Standard technical and financial eligibility criteria apply. Minimum turnover and past experience in similar civil works required.",
+        "scope_of_work": pre_extracted_scope or "Scope of work is not mentioned in the downloaded tender documents.",
+        "scope_source_documents": ["Portal AI Summary"] if pre_extracted_scope else [],
+        "qualification_criteria": pre_extracted_eligibility or "Eligibility criteria is not specified in the downloaded tender documents.",
         "qualification_source_documents": ["Portal AI Summary"] if pre_extracted_eligibility else [],
-        "documents_required_for_bid": pre_extracted_documents or [
-            "Earnest Money Deposit (EMD) receipt / BG",
-            "Company / Firm Registration Certificate",
-            "GST Registration & Latest Return",
-            "PAN Card Copy",
-            "Technical Experience / Work Completion Certificates",
-            "Financial Audited Statements / Turnover Certificate"
-        ],
+        "documents_required_for_bid": pre_extracted_documents or [],
         "bid_docs_source_documents": ["Portal AI Summary"] if pre_extracted_documents is not None else [],
         "extraction_confidence": "high" if has_pre_extracted else "low",
         "notes": "Extracted using portal summary fields." if has_pre_extracted else "Extracted with standard baseline template.",

@@ -41,7 +41,7 @@ def run(entry_url: str, headless: bool = True):
 
             try:
                 page.goto("https://www.tender247.com/auth/tender",
-                          wait_until="networkidle", timeout=30000)
+                          wait_until="domcontentloaded", timeout=30000)
             except Exception as e:
                 print(f"   Direct navigation failed: {e}")
                 browser.close()

@@ -74,7 +74,7 @@ def setup_session_interactively():
                 page.fill('input[name="emailId"]', TENDER247_EMAIL)
                 page.fill('input[name="password"]', TENDER247_PASSWORD)
                 page.click('button[type="submit"]')
-                page.wait_for_load_state("networkidle", timeout=15000)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception as e:
                 print(f"Auto-fill failed ({e}) — please log in manually in the browser window.")
 
@@ -171,8 +171,11 @@ def get_authenticated_page(headless: bool = True, max_retries: int = 3, start_ur
             print(f"Got 'No Record Found' on attempt {attempt}/{max_retries} "
                   f"— likely a timing issue, reloading...")
             if attempt < max_retries:
-                page.reload(wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)  # small buffer for client-side fetch
+                try:
+                    page.reload(wait_until="domcontentloaded", timeout=30000)
+                except Exception as e:
+                    print(f"Reload warning: {e}")
+                page.wait_for_timeout(3000)  # small buffer for client-side fetch
             continue
 
         else:  # "unknown"

@@ -2,6 +2,14 @@ import requests
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+
+def run_in_thread(func, *args, **kwargs):
+    """Executes a function inside a fresh worker thread to ensure Playwright Sync API
+    never conflicts with any active asyncio event loops in the main thread."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args, **kwargs)
+        return future.result()
 
 from tenderlead.scrapers.tenderdetail_session import get_authenticated_page as get_tenderdetail_page, scrape_all_query_tenders
 from tenderlead.scrapers.tender247_session import get_authenticated_page as get_tender247_page
@@ -278,7 +286,7 @@ def process_job(job_data):
             from_date = payload.get("from_date")
             to_date = payload.get("to_date")
             print(f"[Agent] Processing Stage 1 for source: {source} (screening date: {screening_date}, from_date: {from_date}, to_date: {to_date})...")
-            results = run_stage1_listings(source, screening_date, from_date, to_date)
+            results = run_in_thread(run_stage1_listings, source, screening_date, from_date, to_date)
             resp = requests.post(
                 f"{SITE_URL}/api/method/tenderlead.api.ingest_stage1_results",
                 headers=headers,
@@ -291,7 +299,7 @@ def process_job(job_data):
             if tenders:
                 source = tenders[0].get("source", "Tender247")
                 print(f"[Agent] Processing Stage 2 Secondary Screening for {len(tenders)} tenders from {source}...")
-                results_map = run_stage2_docs(tenders, source)
+                results_map = run_in_thread(run_stage2_docs, tenders, source)
 
                 for tender_id, item in results_map.items():
                     file_paths = item.get("file_paths", [])

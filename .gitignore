@@ -26,9 +26,15 @@ frontend/tenderdetail_session.json
 *.log
 frontend/scrape.log
 
-# Temp/HTML dumps
+# Temp/HTML dumps & Archives
 tender247_dashboard_dump.html
+*.zip
+*.tar.gz
+scratch/pycdc/
+scratch/*.zip
+scratch/*.db
 
 # IDEs
 .idea/
 .vscode/
+

@@ -1,0 +1,18 @@
+# Core dependencies
+beautifulsoup4>=4.12.0
+playwright>=1.30.0
+requests>=2.28.0
+urllib3>=1.26.0
+
+# Stage B Document extraction & parsing
+pymupdf>=1.23.0
+pdfplumber>=0.9.0
+python-docx>=0.8.11
+openpyxl>=3.1.0
+
+# Server & Dashboard
+python-socketio[client]>=5.8.0
+
+# LLM Provider SDKs (Optional depending on active provider)
+cohere>=5.0.0
+groq>=0.4.0

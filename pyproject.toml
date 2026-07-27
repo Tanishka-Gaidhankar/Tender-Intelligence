@@ -46,3 +46,7 @@ line_length = 100
 
 [tool.setuptools.packages.find]
 include = ["tenderlead", "tenderlead.*"]
+
+[tool.bench.frappe-dependencies]
+frappe = ">=14.0.0, <16.0.0"
+

@@ -20,8 +20,8 @@ Instead of manually sifting through hundreds of daily notification emails and do
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Raw Email Digests Intake                        │
-│                 (TenderDetail & Tender247 Email Alerts)                 │
+│                        Scraping Digests Intake                         │
+│                 (TenderDetail & Tender247 scrapping)                   │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
